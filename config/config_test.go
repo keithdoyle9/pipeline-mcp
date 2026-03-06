@@ -85,6 +85,24 @@ func TestLoadDoesNotUseSharedFallbackForWriteToken(t *testing.T) {
 	}
 }
 
+func TestLoadAllowsMutationsWhenExplicitWriteTokenIsSet(t *testing.T) {
+	t.Setenv("DISABLE_MUTATIONS", "false")
+	t.Setenv("GITHUB_WRITE_TOKEN", "write-token")
+	t.Setenv("GITHUB_READ_TOKEN", "read-token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.DisableMutations {
+		t.Fatal("expected mutations to be enabled")
+	}
+	if cfg.GitHubWriteToken != "write-token" {
+		t.Fatalf("expected explicit write token, got %q", cfg.GitHubWriteToken)
+	}
+}
+
 func TestLoadRejectsInvalidRuntimeConfiguration(t *testing.T) {
 	testCases := []struct {
 		name    string
