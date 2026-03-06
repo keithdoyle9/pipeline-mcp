@@ -546,6 +546,7 @@ func testConfig(disableMutations bool) *config.Config {
 	return &config.Config{
 		ServerName:          "pipeline-mcp",
 		Version:             "test",
+		GitHubAPIBaseURL:    "https://api.github.com",
 		DisableMutations:    disableMutations,
 		MaxLogBytes:         20 * 1024 * 1024,
 		DefaultLookbackDays: 14,

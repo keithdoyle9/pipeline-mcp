@@ -107,6 +107,7 @@ func run() error {
 		cfg := &config.Config{
 			ServerName:          "pipeline-mcp-benchmark",
 			Version:             "benchmark",
+			GitHubAPIBaseURL:    "https://api.github.com",
 			DisableMutations:    true,
 			MaxLogBytes:         20 * 1024 * 1024,
 			DefaultLookbackDays: 14,

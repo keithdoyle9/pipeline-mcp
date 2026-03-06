@@ -17,6 +17,7 @@ Thanks for contributing to `pipeline-mcp`.
 3. Run `go test ./...`.
 4. Run `go run ./cmd/benchmark` if you change diagnosis logic or benchmark fixtures.
 5. Build the server with `go build -o bin/pipeline-mcp ./cmd/pipeline-mcp`.
+6. If you change packaging or release automation, run `goreleaser check` and `goreleaser release --snapshot --clean`.
 
 ## Pull Requests
 

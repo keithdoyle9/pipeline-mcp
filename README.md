@@ -35,16 +35,16 @@
 
 ## Prerequisites
 
-- Go `1.26+`
 - GitHub token with `actions:read` for read tools
 - Optional write token with `actions:write` for `pipeline.rerun`
+- Go `1.26+` only if you are building from source
 
 ## Configuration
 
 Environment variables:
 
 - `SERVER_NAME` (default: `pipeline-mcp`)
-- `VERSION` (default: `v0.1.0`)
+- `VERSION` (default: release tag for official binaries, or `v0.1.0` for local source builds)
 - `LOG_LEVEL` (`debug|info|warn|error`, default: `info`)
 - `GITHUB_API_BASE_URL` (default: `https://api.github.com`)
 - `GITHUB_READ_TOKEN` (recommended)
@@ -52,27 +52,72 @@ Environment variables:
 - `GITHUB_TOKEN` or `GH_TOKEN` can be used as fallback for both read and write tokens
 - `DISABLE_MUTATIONS` (default: `true`)
 - `AUDIT_LOG_PATH` (default: `var/audit-events.jsonl`)
+- `AUDIT_SIGNING_KEY` (optional HMAC key for tamper-evident audit signatures)
 - `METRICS_EXPORT_PATH` (optional JSON snapshot path)
 - `MAX_LOG_BYTES` (default: `20971520`)
 - `DEFAULT_LOOKBACK_DAYS` (default: `14`)
 - `MAX_HISTORICAL_RUNS` (default: `100`)
 - `HTTP_TIMEOUT_SECONDS` (default: `25`)
+- `USER_AGENT` (default: `pipeline-mcp/<version>`)
 - `ACTOR` (default: `pipeline-mcp`)
 
-## Build and Run
+When `AUDIT_SIGNING_KEY` is unset, audit entries omit the `signature` field rather than emitting a misleading unhashed digest.
+
+## Install
+
+Official release archives are published for `darwin` and `linux` on `amd64` and `arm64`.
+
+Replace `VERSION` with the release tag you want to install.
 
 ```bash
-go mod tidy
-go build -o bin/pipeline-mcp ./cmd/pipeline-mcp
-./bin/pipeline-mcp
+VERSION=v0.2.0
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+case "$ARCH" in
+  x86_64) ARCH=amd64 ;;
+  arm64|aarch64) ARCH=arm64 ;;
+  *)
+    echo "unsupported architecture: $ARCH" >&2
+    exit 1
+    ;;
+esac
+
+ARCHIVE="pipeline-mcp_${VERSION}_${OS}_${ARCH}.tar.gz"
+BASE_URL="https://github.com/keithdoyle9/pipeline-mcp/releases/download/${VERSION}"
+
+curl --fail -LO "${BASE_URL}/${ARCHIVE}"
+curl --fail -LO "${BASE_URL}/checksums.txt"
+if command -v sha256sum >/dev/null 2>&1; then
+  grep " ${ARCHIVE}\$" checksums.txt | sha256sum -c -
+else
+  grep " ${ARCHIVE}\$" checksums.txt | shasum -a 256 -c -
+fi
+tar -xzf "${ARCHIVE}"
+install -m 0755 pipeline-mcp /usr/local/bin/pipeline-mcp
 ```
+
+The checksum verification command above must succeed before installing.
 
 The server runs on stdio transport by default.
 
 For Claude Code, attach the token when registering the MCP server:
 
 ```bash
-claude mcp add --scope local -e GITHUB_READ_TOKEN=your_token_here -- pipeline-mcp /absolute/path/to/bin/pipeline-mcp
+claude mcp add --scope local -e GITHUB_READ_TOKEN=your_token_here -- pipeline-mcp "$(command -v pipeline-mcp)"
+```
+
+If you prefer to install from source with Go:
+
+```bash
+go install github.com/keithdoyle9/pipeline-mcp/cmd/pipeline-mcp@latest
+```
+
+## Build from Source
+
+```bash
+go build -o bin/pipeline-mcp ./cmd/pipeline-mcp
+./bin/pipeline-mcp
 ```
 
 Repository-only shortcut examples:
@@ -103,6 +148,13 @@ Run benchmark harness:
 
 ```bash
 ./scripts/run-benchmarks.sh
+```
+
+Validate the release configuration locally:
+
+```bash
+goreleaser check
+goreleaser release --snapshot --clean
 ```
 
 Benchmark fixtures are in `testdata/benchmarks/historical_failures.json`.

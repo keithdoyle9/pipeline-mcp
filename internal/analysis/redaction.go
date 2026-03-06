@@ -4,6 +4,7 @@ import "regexp"
 
 var redactionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]{20,}`),
+	regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`),
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
 	regexp.MustCompile(`(?i)(token|password|secret|api[_-]?key)(\s*[:=]\s*)([^\s"']+)`),
 	regexp.MustCompile(`(?i)authorization:\s*bearer\s+[a-z0-9._-]+`),

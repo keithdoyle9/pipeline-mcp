@@ -6,6 +6,7 @@
 - [ ] `GITHUB_READ_TOKEN` scope is limited to `actions:read`.
 - [ ] `GITHUB_WRITE_TOKEN` is only configured where rerun is allowed (`actions:write`).
 - [ ] Audit log path is persistent and protected.
+- [ ] `AUDIT_SIGNING_KEY` is configured anywhere tamper-evident audit logs are required.
 - [ ] Log redaction tests pass.
 
 ## Reliability
@@ -18,6 +19,9 @@
 ## Operations
 
 - [ ] Build single binary: `go build -o bin/pipeline-mcp ./cmd/pipeline-mcp`.
+- [ ] Validate release config: `goreleaser check`.
+- [ ] Validate snapshot archives and checksums: `goreleaser release --snapshot --clean`.
+- [ ] Confirm GitHub Release contains `darwin` and `linux` archives for `amd64` and `arm64`, plus `checksums.txt`.
 - [ ] Verify server startup and MCP tool listing with target client.
 - [ ] Confirm audit event format includes actor, reason, scope, timestamp, and outcome.
 - [ ] Confirm runbook owners for provider outage and credential rotation.

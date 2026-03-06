@@ -45,7 +45,7 @@ func (noopGitHubClient) Rerun(context.Context, string, string, int64, bool) erro
 
 func TestRegisterExposesFiveTools(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "pipeline-mcp-test", Version: "test"}, &mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}})
-	svc := service.New(&config.Config{DisableMutations: true, MaxLogBytes: 1024, DefaultLookbackDays: 14, MaxHistoricalRuns: 100}, noopGitHubClient{}, audit.NewJSONLStore(t.TempDir()+"/audit.jsonl"), telemetry.NewCollector(""), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := service.New(&config.Config{GitHubAPIBaseURL: "https://api.github.com", DisableMutations: true, MaxLogBytes: 1024, DefaultLookbackDays: 14, MaxHistoricalRuns: 100}, noopGitHubClient{}, audit.NewJSONLStore(t.TempDir()+"/audit.jsonl", ""), telemetry.NewCollector(""), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	Register(server, Dependencies{Service: svc, Telemetry: telemetry.NewCollector(""), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)

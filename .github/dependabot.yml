@@ -7,8 +7,6 @@ updates:
       day: monday
       time: "09:00"
       timezone: "America/New_York"
-    labels:
-      - dependencies
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
     directory: "/"
@@ -17,6 +15,4 @@ updates:
       day: monday
       time: "09:00"
       timezone: "America/New_York"
-    labels:
-      - dependencies
     open-pull-requests-limit: 5

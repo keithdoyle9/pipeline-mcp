@@ -133,7 +133,7 @@ func (s *Service) diagnoseMetadataFailure(ctx context.Context, owner, repo strin
 			continue
 		}
 
-		checkRunID, err := githubapi.ParseCheckRunURL(job.CheckRunURL)
+		checkRunID, err := githubapi.ParseCheckRunURLForBase(job.CheckRunURL, s.cfg.GitHubAPIBaseURL)
 		if err != nil {
 			continue
 		}

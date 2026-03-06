@@ -38,3 +38,19 @@ func TestParseCheckRunURL(t *testing.T) {
 		t.Fatalf("expected check run id 987654321, got %d", checkRunID)
 	}
 }
+
+func TestParseCheckRunURLForBaseRejectsUnexpectedHost(t *testing.T) {
+	if _, err := ParseCheckRunURLForBase("https://example.com/repos/acme/app/check-runs/987654321", "https://api.github.com"); err == nil {
+		t.Fatal("expected host validation error")
+	}
+}
+
+func TestParseCheckRunURLForBaseSupportsConfiguredEnterpriseHost(t *testing.T) {
+	checkRunID, err := ParseCheckRunURLForBase("https://ghe.example.com/api/v3/repos/acme/app/check-runs/987654321", "https://ghe.example.com/api/v3")
+	if err != nil {
+		t.Fatalf("ParseCheckRunURLForBase() error = %v", err)
+	}
+	if checkRunID != 987654321 {
+		t.Fatalf("expected check run id 987654321, got %d", checkRunID)
+	}
+}

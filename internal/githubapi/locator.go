@@ -61,6 +61,10 @@ func ParseRepository(repo string) (owner string, name string, err error) {
 }
 
 func ParseCheckRunURL(raw string) (int64, error) {
+	return ParseCheckRunURLForBase(raw, "https://api.github.com")
+}
+
+func ParseCheckRunURLForBase(raw, baseURL string) (int64, error) {
 	if strings.TrimSpace(raw) == "" {
 		return 0, fmt.Errorf("check_run_url is required")
 	}
@@ -70,8 +74,33 @@ func ParseCheckRunURL(raw string) (int64, error) {
 		return 0, fmt.Errorf("parse check run url: %w", err)
 	}
 
-	segments := strings.Split(strings.Trim(path.Clean(u.Path), "/"), "/")
-	if len(segments) < 5 || segments[3] != "check-runs" {
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return 0, fmt.Errorf("parse github api base url: %w", err)
+	}
+	if base.Host == "" {
+		return 0, fmt.Errorf("github api base url host is required")
+	}
+	if !strings.EqualFold(u.Host, base.Host) {
+		return 0, fmt.Errorf("unsupported host %q", u.Host)
+	}
+
+	cleanPath := strings.Trim(path.Clean(u.Path), "/")
+	basePath := strings.Trim(path.Clean(base.Path), "/")
+	relativePath := cleanPath
+	if basePath != "" && basePath != "." {
+		prefix := basePath + "/"
+		if !strings.HasPrefix(cleanPath, prefix) {
+			return 0, fmt.Errorf("unsupported check run url path")
+		}
+		relativePath = strings.TrimPrefix(cleanPath, prefix)
+	}
+
+	segments := strings.Split(relativePath, "/")
+	if len(segments) != 5 {
+		return 0, fmt.Errorf("unsupported check run url path")
+	}
+	if segments[0] != "repos" || segments[3] != "check-runs" {
 		return 0, fmt.Errorf("unsupported check run url path")
 	}
 

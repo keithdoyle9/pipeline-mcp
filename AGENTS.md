@@ -7,13 +7,18 @@
 - `internal/githubapi/`: GitHub Actions client, API types, and error mapping.
 - `internal/analysis/`: deterministic analysis utilities (for example, log secret redaction).
 - `testdata/benchmarks/`: fixtures for diagnosis/flaky/performance benchmark scenarios.
+- `.github/workflows/`: CI, security scanning, and tagged release automation.
+- `.goreleaser.yml`: release artifact definitions for official binaries.
 - `scripts/` and `tools/`: local automation and helper utilities.
+- Local planning notes in the repo root are gitignored and should remain untracked.
 
 ## Build, Test, and Development Commands
 - `go mod tidy`: sync module dependencies after import changes.
 - `GOCACHE=$(pwd)/.gocache go build ./...`: compile all packages.
 - `GOCACHE=$(pwd)/.gocache go test ./...`: run all tests.
 - `GOCACHE=$(pwd)/.gocache go test ./... -cover`: run tests with coverage summary.
+- `goreleaser check`: validate release configuration.
+- `goreleaser release --snapshot --clean`: build local release archives and `checksums.txt` without publishing.
 - `go run ./cmd/pipeline-mcp`: run the server locally once `main.go` is present.
 
 ## Coding Style & Naming Conventions
