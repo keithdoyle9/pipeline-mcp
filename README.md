@@ -23,6 +23,15 @@
 - Contributor workflow documentation in [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 - CODEOWNERS, issue templates, and a pull request template for consistent intake and review.
 
+## AI Assistance
+
+This project uses AI-assisted development. Code contributions may be generated
+or refined with Claude Code (Anthropic) and/or OpenAI Codex. All AI-generated
+code is reviewed, tested, and owned by the project maintainers.
+
+When AI tools assist a change, commit messages should include one
+`AI-assisted-by` trailer per tool used, including the model used for the work.
+
 ## Architecture
 
 - `cmd/pipeline-mcp`: server entrypoint.

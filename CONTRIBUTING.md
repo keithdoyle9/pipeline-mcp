@@ -10,6 +10,20 @@ Thanks for contributing to `pipeline-mcp`.
 - Update documentation when public behavior, configuration, or workflows change.
 - Do not include secrets, credentials, or sensitive logs in commits, issues, or pull requests.
 
+## AI Assistance
+
+This project uses AI-assisted development. Code contributions may be generated
+or refined with Claude Code (Anthropic) and/or OpenAI Codex. All AI-generated
+code is reviewed, tested, and owned by the project maintainers.
+
+When AI tools assist a change, include one `AI-assisted-by` commit trailer per
+tool used and include the model used for the work.
+
+Examples:
+
+- `AI-assisted-by: Claude Code (claude-sonnet-4-5)`
+- `AI-assisted-by: OpenAI Codex (GPT-5)`
+
 ## Development Setup
 
 1. Install Go `1.26.1` or newer.
