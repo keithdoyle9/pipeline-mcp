@@ -1,0 +1,110 @@
+[
+  {
+    "name": "go test assertion",
+    "run_url": "https://github.com/acme/mobile-app/actions/runs/1001",
+    "logs": "--- FAIL: TestCheckout\nAssertionError: expected 200 got 500",
+    "expected_category": "test_failure"
+  },
+  {
+    "name": "network package outage",
+    "run_url": "https://github.com/acme/mobile-app/actions/runs/1002",
+    "logs": "npm ERR! network request failed\n503 Service Unavailable",
+    "expected_category": "dependency_outage"
+  },
+  {
+    "name": "runner timeout",
+    "run_url": "https://github.com/acme/mobile-app/actions/runs/1003",
+    "logs": "context deadline exceeded\nstep timed out",
+    "expected_category": "infra_timeout"
+  },
+  {
+    "name": "yaml syntax",
+    "run_url": "https://github.com/acme/mobile-app/actions/runs/1004",
+    "logs": "workflow is not valid\nyaml: line 17",
+    "expected_category": "config_error"
+  },
+  {
+    "name": "compile undefined symbol",
+    "run_url": "https://github.com/acme/mobile-app/actions/runs/1005",
+    "logs": "build failed\nundefined: NewHandler",
+    "expected_category": "compilation_error"
+  },
+  {
+    "name": "environment protection branch policy",
+    "run_url": "https://github.com/acme/mobile-app/actions/runs/1006",
+    "expected_category": "config_error",
+    "jobs": [
+      {
+        "id": 7,
+        "name": "ios-release-candidate",
+        "conclusion": "failure",
+        "head_branch": "main",
+        "check_run_url": "https://api.github.com/repos/acme/mobile-app/check-runs/7001",
+        "steps": []
+      }
+    ],
+    "check_run": {
+      "id": 7001,
+      "deployment": {
+        "environment": "ios-ci",
+        "original_environment": "ios-ci"
+      }
+    },
+    "annotations": [
+      {
+        "path": ".github",
+        "start_line": 1,
+        "annotation_level": "failure",
+        "message": "Branch \"main\" is not allowed to deploy to ios-ci due to environment protection rules."
+      },
+      {
+        "path": ".github",
+        "start_line": 1,
+        "annotation_level": "failure",
+        "message": "The deployment was rejected or didn't satisfy other protection rules."
+      }
+    ],
+    "branch_policies": [
+      {
+        "name": "release/*",
+        "type": "branch"
+      }
+    ]
+  },
+  {
+    "name": "environment approval gate",
+    "run_url": "https://github.com/acme/mobile-app/actions/runs/1007",
+    "expected_category": "config_error",
+    "jobs": [
+      {
+        "id": 8,
+        "name": "deploy-production",
+        "conclusion": "failure",
+        "head_branch": "main",
+        "check_run_url": "https://api.github.com/repos/acme/mobile-app/check-runs/7002",
+        "steps": []
+      }
+    ],
+    "check_run": {
+      "id": 7002,
+      "deployment": {
+        "environment": "production",
+        "original_environment": "production"
+      }
+    },
+    "annotations": [
+      {
+        "path": ".github",
+        "start_line": 1,
+        "annotation_level": "failure",
+        "message": "Deployment to production is awaiting review from required reviewers."
+      },
+      {
+        "path": ".github",
+        "start_line": 1,
+        "annotation_level": "failure",
+        "message": "This job cannot continue until the required reviewers approve the deployment."
+      }
+    ]
+  }
+]

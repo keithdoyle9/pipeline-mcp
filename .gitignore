@@ -1,0 +1,31 @@
+# Build artifacts
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go artifacts
+*.test
+*.out
+coverage.out
+
+# Runtime artifacts
+var/
+*.log
+.gocache/
+
+# Local agent/tooling state
+.agent/
+.claude/
+
+# IDE / OS files
+.DS_Store
+.vscode/
+.idea/
+.direnv/
+
+# Environment files
+.env
+.env.*
+.envrc

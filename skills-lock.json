@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "go-mcp-server-generator": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "96615e5275583ea9f3dbb747b059fd98e3b2bbfc7fe20ec59144c7447e1bbc86"
+    }
+  }
+}
