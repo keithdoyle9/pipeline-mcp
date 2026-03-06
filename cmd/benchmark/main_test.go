@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
-	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
 )
 
 func TestTopCategoriesForFixtureUsesRankedDiagnoses(t *testing.T) {
@@ -19,7 +18,6 @@ func TestTopCategoriesForFixtureUsesRankedDiagnoses(t *testing.T) {
 
 	got := topCategoriesForFixture(
 		fixture,
-		[]githubapi.Job{{Name: "test", Conclusion: "failure"}},
 		&domain.FailureDiagnostic{FailureCategory: "test_failure"},
 	)
 
@@ -37,7 +35,6 @@ func TestTopCategoriesForFixtureUsesRankedDiagnoses(t *testing.T) {
 func TestTopCategoriesForFixtureFallsBackToServiceCategory(t *testing.T) {
 	got := topCategoriesForFixture(
 		caseFixture{},
-		[]githubapi.Job{{Name: "deploy", Conclusion: "failure"}},
 		&domain.FailureDiagnostic{FailureCategory: "config_error"},
 	)
 

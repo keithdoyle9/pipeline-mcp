@@ -149,7 +149,6 @@ func evaluateFixture(fixture caseFixture) (benchmarkCaseResult, error) {
 		MaxHistoricalRuns:   100,
 		Actor:               "benchmark",
 	}
-	jobs := fixtureJobs(fixture)
 	svc := service.New(
 		cfg,
 		benchmarkGitHubClient{fixture: fixture},
@@ -165,7 +164,7 @@ func evaluateFixture(fixture caseFixture) (benchmarkCaseResult, error) {
 		return benchmarkCaseResult{}, fmt.Errorf("fixture %q failed: %s", fixture.Name, toolErr.Message)
 	}
 
-	top3 := topCategoriesForFixture(fixture, jobs, diagnostic)
+	top3 := topCategoriesForFixture(fixture, diagnostic)
 	return benchmarkCaseResult{
 		Name:             fixture.Name,
 		ExpectedCategory: fixture.ExpectedCategory,
@@ -206,32 +205,25 @@ func summarizeResults(results []benchmarkCaseResult) benchmarkReport {
 	return report
 }
 
-func topCategoriesForFixture(fixture caseFixture, jobs []githubapi.Job, diagnostic *domain.FailureDiagnostic) []string {
+func topCategoriesForFixture(fixture caseFixture, diagnostic *domain.FailureDiagnostic) []string {
+	if strings.TrimSpace(fixture.Logs) == "" {
+		if diagnostic == nil || strings.TrimSpace(diagnostic.FailureCategory) == "" {
+			return nil
+		}
+		return []string{diagnostic.FailureCategory}
+	}
+
 	categories := make([]string, 0, 3)
-	if strings.TrimSpace(fixture.Logs) != "" {
-		for _, candidate := range analysis.RankFailureDiagnoses(fixture.Logs, jobs) {
-			categories = append(categories, candidate.FailureCategory)
-			if len(categories) == 3 {
-				break
-			}
+	for _, candidate := range analysis.RankFailureDiagnoses(fixture.Logs, fixture.Jobs) {
+		categories = append(categories, candidate.FailureCategory)
+		if len(categories) == 3 {
+			break
 		}
 	}
-	if diagnostic != nil && strings.TrimSpace(diagnostic.FailureCategory) != "" {
-		categories = append([]string{diagnostic.FailureCategory}, categories...)
-	}
-
-	categories = dedupeCategories(categories)
-	if len(categories) > 3 {
-		categories = categories[:3]
+	if len(categories) == 0 && diagnostic != nil && strings.TrimSpace(diagnostic.FailureCategory) != "" {
+		return []string{diagnostic.FailureCategory}
 	}
 	return categories
-}
-
-func fixtureJobs(fixture caseFixture) []githubapi.Job {
-	if len(fixture.Jobs) > 0 {
-		return fixture.Jobs
-	}
-	return []githubapi.Job{{Name: "job", Conclusion: "failure"}}
 }
 
 func containsCategory(categories []string, want string) bool {
@@ -241,25 +233,6 @@ func containsCategory(categories []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func dedupeCategories(categories []string) []string {
-	if len(categories) <= 1 {
-		return categories
-	}
-	seen := make(map[string]struct{}, len(categories))
-	out := make([]string, 0, len(categories))
-	for _, category := range categories {
-		if strings.TrimSpace(category) == "" {
-			continue
-		}
-		if _, ok := seen[category]; ok {
-			continue
-		}
-		seen[category] = struct{}{}
-		out = append(out, category)
-	}
-	return out
 }
 
 func averageLatency(values []float64) float64 {
