@@ -52,12 +52,12 @@ for the full policy and examples.
 Environment variables:
 
 - `SERVER_NAME` (default: `pipeline-mcp`)
-- `VERSION` (default: release tag for official binaries, or `v0.1.0` for local source builds)
+- `VERSION` (default: release tag for official binaries, or `dev` for local source builds)
 - `LOG_LEVEL` (`debug|info|warn|error`, default: `info`)
 - `GITHUB_API_BASE_URL` (default: `https://api.github.com`)
 - `GITHUB_READ_TOKEN` (recommended)
-- `GITHUB_WRITE_TOKEN` (required for reruns)
-- `GITHUB_TOKEN` or `GH_TOKEN` can be used as fallback for both read and write tokens
+- `GITHUB_WRITE_TOKEN` (required when `DISABLE_MUTATIONS=false`; no shared fallback)
+- `GITHUB_TOKEN` or `GH_TOKEN` can be used as fallback for `GITHUB_READ_TOKEN`
 - `DISABLE_MUTATIONS` (default: `true`)
 - `AUDIT_LOG_PATH` (default: `var/audit-events.jsonl`)
 - `AUDIT_SIGNING_KEY` (optional HMAC key for tamper-evident audit signatures)
@@ -70,6 +70,8 @@ Environment variables:
 - `ACTOR` (default: `pipeline-mcp`)
 
 When `AUDIT_SIGNING_KEY` is unset, audit entries omit the `signature` field rather than emitting a misleading unhashed digest.
+
+For least-privilege token setup and release operations, see [docs/operator-guide.md](docs/operator-guide.md).
 
 ## Install
 
@@ -162,9 +164,10 @@ Run benchmark harness:
 Validate the release configuration locally:
 
 ```bash
-goreleaser check
-goreleaser release --snapshot --clean
+./scripts/verify-release.sh
 ```
+
+The release verification script runs `go vet`, tests, benchmark fixtures, `govulncheck`, single-binary compilation, and the pinned GoReleaser checks. It falls back to pinned `go run` invocations if `govulncheck` or `goreleaser` are not already installed.
 
 Benchmark fixtures are in `testdata/benchmarks/historical_failures.json`.
 

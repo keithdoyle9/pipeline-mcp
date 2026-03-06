@@ -298,6 +298,10 @@ func extractErrorMessage(body []byte) string {
 }
 
 func unzipOrText(body []byte, maxBytes int64) (string, error) {
+	if maxBytes <= 0 {
+		maxBytes = 1 << 20
+	}
+
 	zipReader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 	if err != nil {
 		if int64(len(body)) > maxBytes {

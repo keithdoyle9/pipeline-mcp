@@ -31,6 +31,17 @@ jobs:
       - name: Test
         run: go test ./... -count=1
 
+      - name: Vet
+        run: go vet ./...
+
+      - name: Benchmark corpus
+        run: go run ./cmd/benchmark
+
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          govulncheck ./...
+
       - name: Install GoReleaser
         run: GOBIN="$(pwd)/bin" go install github.com/goreleaser/goreleaser/v2@v2.14.1
 
