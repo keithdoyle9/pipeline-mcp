@@ -162,9 +162,6 @@ func parseLogLevel(value string) (slog.Level, error) {
 }
 
 func validate(cfg *Config) error {
-	if cfg == nil {
-		return fmt.Errorf("config is required")
-	}
 	if cfg.MaxLogBytes <= 0 {
 		return fmt.Errorf("MAX_LOG_BYTES must be greater than zero")
 	}

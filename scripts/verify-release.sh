@@ -8,6 +8,8 @@ GORELEASER_VERSION="${GORELEASER_VERSION:-v2.14.1}"
 GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION:-v1.1.4}"
 
 run_goreleaser() {
+  # Prefer an installed GoReleaser for speed. The pinned go run fallback is the
+  # reproducible path when the binary is not already present on the machine.
   if command -v goreleaser >/dev/null 2>&1; then
     goreleaser "$@"
     return
@@ -17,6 +19,7 @@ run_goreleaser() {
 }
 
 run_govulncheck() {
+  # Match the local fast-path/fallback behavior used for GoReleaser above.
   if command -v govulncheck >/dev/null 2>&1; then
     govulncheck "$@"
     return
