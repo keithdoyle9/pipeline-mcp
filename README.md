@@ -25,12 +25,11 @@
 
 ## AI Assistance
 
-This project uses AI-assisted development. Code contributions may be generated
-or refined with Claude Code (Anthropic) and/or OpenAI Codex. All AI-generated
-code is reviewed, tested, and owned by the project maintainers.
+This project uses AI-assisted development.
 
-When AI tools assist a change, commit messages should include one
-`AI-assisted-by` trailer per tool used, including the model used for the work.
+AI-assisted commits must include one `AI-assisted-by` trailer per tool used,
+including the model used for the work. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the full policy and examples.
 
 ## Architecture
 

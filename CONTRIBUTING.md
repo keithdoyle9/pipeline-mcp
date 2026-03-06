@@ -16,13 +16,13 @@ This project uses AI-assisted development. Code contributions may be generated
 or refined with Claude Code (Anthropic) and/or OpenAI Codex. All AI-generated
 code is reviewed, tested, and owned by the project maintainers.
 
-When AI tools assist a change, include one `AI-assisted-by` commit trailer per
-tool used and include the model used for the work.
+AI-assisted commits must include one `AI-assisted-by` trailer per tool used,
+including the model used for the work.
 
 Examples:
 
-- `AI-assisted-by: Claude Code (claude-sonnet-4-5)`
-- `AI-assisted-by: OpenAI Codex (GPT-5)`
+- `AI-assisted-by: Claude Code (<model-name>)`
+- `AI-assisted-by: OpenAI Codex (<model-name>)`
 
 ## Development Setup
 
