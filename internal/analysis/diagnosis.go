@@ -16,6 +16,15 @@ type categoryRule struct {
 	patterns        []*regexp.Regexp
 }
 
+type RankedDiagnosis struct {
+	FailureCategory    string
+	SuspectedRootCause string
+	Confidence         float64
+	Score              int
+	EvidenceRefs       []domain.EvidenceRef
+	Recommendations    []domain.FixRecommendation
+}
+
 var diagnosisRules = []categoryRule{
 	{
 		category:  "test_failure",
@@ -90,15 +99,16 @@ var diagnosisRules = []categoryRule{
 	},
 }
 
-func DiagnoseFailure(logs string, jobs []githubapi.Job) (domain.FailureDiagnostic, []domain.FixRecommendation) {
+func RankFailureDiagnoses(logs string, jobs []githubapi.Job) []RankedDiagnosis {
+	ranked, _ := rankFailureDiagnoses(logs, jobs)
+	return ranked
+}
+
+func rankFailureDiagnoses(logs string, jobs []githubapi.Job) ([]RankedDiagnosis, []string) {
 	logs = RedactSecrets(logs)
 	impactedJobs := failedJobs(jobs)
 
-	bestCategory := "unknown"
-	bestCause := "Unable to infer root cause from available evidence."
-	bestScore := 0
-	var evidence []domain.EvidenceRef
-	var recommendations []domain.FixRecommendation
+	ranked := make([]RankedDiagnosis, 0, len(diagnosisRules))
 
 	for _, rule := range diagnosisRules {
 		score := 0
@@ -110,38 +120,56 @@ func DiagnoseFailure(logs string, jobs []githubapi.Job) (domain.FailureDiagnosti
 				matched = append(matched, extractEvidence(logs, found, 3-len(matched))...)
 			}
 		}
-		if score > bestScore {
-			bestScore = score
-			bestCategory = rule.category
-			bestCause = rule.rootCause
-			evidence = matched
-			recommendations = cloneRecommendations(rule.recommendations)
+		if score == 0 {
+			continue
 		}
+
+		recommendations := cloneRecommendations(rule.recommendations)
+		sort.SliceStable(recommendations, func(i, j int) bool {
+			return recommendations[i].Confidence > recommendations[j].Confidence
+		})
+
+		ranked = append(ranked, RankedDiagnosis{
+			FailureCategory:    rule.category,
+			SuspectedRootCause: rule.rootCause,
+			Confidence:         scoreToConfidence(score, len(matched), len(impactedJobs), rule.category),
+			Score:              score,
+			EvidenceRefs:       matched,
+			Recommendations:    recommendations,
+		})
 	}
 
-	if len(evidence) == 0 {
-		evidence = append(evidence, fallbackEvidence(logs, impactedJobs)...)
+	if len(ranked) == 0 {
+		return []RankedDiagnosis{unknownRankedDiagnosis(logs, impactedJobs)}, impactedJobs
 	}
 
-	confidence := scoreToConfidence(bestScore, len(evidence), len(impactedJobs), bestCategory)
-	if bestCategory == "unknown" {
-		recommendations = []domain.FixRecommendation{
-			{RecommendationID: "collect-more-context", Description: "Retrieve full logs and inspect first failing step in each impacted job.", ExpectedImpact: "Improves diagnosis confidence with richer evidence.", Confidence: 0.55},
-			{RecommendationID: "rerun-failed-jobs-only", Description: "Rerun failed jobs to distinguish transient failure from deterministic breakage.", ExpectedImpact: "Quickly detects transient infrastructure issues.", Confidence: 0.58},
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].Score == ranked[j].Score {
+			if len(ranked[i].EvidenceRefs) == len(ranked[j].EvidenceRefs) {
+				return ranked[i].Confidence > ranked[j].Confidence
+			}
+			return len(ranked[i].EvidenceRefs) > len(ranked[j].EvidenceRefs)
 		}
-	}
-
-	sort.SliceStable(recommendations, func(i, j int) bool {
-		return recommendations[i].Confidence > recommendations[j].Confidence
+		return ranked[i].Score > ranked[j].Score
 	})
 
+	return ranked, impactedJobs
+}
+
+func DiagnoseFailure(logs string, jobs []githubapi.Job) (domain.FailureDiagnostic, []domain.FixRecommendation) {
+	ranked, impactedJobs := rankFailureDiagnoses(logs, jobs)
+	if len(ranked) == 0 {
+		ranked = []RankedDiagnosis{unknownRankedDiagnosis(RedactSecrets(logs), impactedJobs)}
+	}
+	best := ranked[0]
+
 	return domain.FailureDiagnostic{
-		FailureCategory:    bestCategory,
-		SuspectedRootCause: bestCause,
-		Confidence:         confidence,
-		EvidenceRefs:       evidence,
+		FailureCategory:    best.FailureCategory,
+		SuspectedRootCause: best.SuspectedRootCause,
+		Confidence:         best.Confidence,
+		EvidenceRefs:       best.EvidenceRefs,
 		ImpactedJobs:       impactedJobs,
-	}, recommendations
+	}, best.Recommendations
 }
 
 func failedJobs(jobs []githubapi.Job) []string {
@@ -222,6 +250,25 @@ func cloneRecommendations(in []domain.FixRecommendation) []domain.FixRecommendat
 	out := make([]domain.FixRecommendation, len(in))
 	copy(out, in)
 	return out
+}
+
+func unknownRecommendations() []domain.FixRecommendation {
+	return []domain.FixRecommendation{
+		{RecommendationID: "rerun-failed-jobs-only", Description: "Rerun failed jobs to distinguish transient failure from deterministic breakage.", ExpectedImpact: "Quickly detects transient infrastructure issues.", Confidence: 0.58},
+		{RecommendationID: "collect-more-context", Description: "Retrieve full logs and inspect first failing step in each impacted job.", ExpectedImpact: "Improves diagnosis confidence with richer evidence.", Confidence: 0.55},
+	}
+}
+
+func unknownRankedDiagnosis(logs string, impactedJobs []string) RankedDiagnosis {
+	evidence := fallbackEvidence(logs, impactedJobs)
+	return RankedDiagnosis{
+		FailureCategory:    "unknown",
+		SuspectedRootCause: "Unable to infer root cause from available evidence.",
+		Confidence:         scoreToConfidence(0, len(evidence), len(impactedJobs), "unknown"),
+		Score:              0,
+		EvidenceRefs:       evidence,
+		Recommendations:    unknownRecommendations(),
+	}
 }
 
 func dedupeStrings(in []string) []string {
