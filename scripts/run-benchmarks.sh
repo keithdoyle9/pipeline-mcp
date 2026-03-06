@@ -6,4 +6,4 @@ cd "$ROOT_DIR"
 
 # Unit tests run in the verify workflow and verify-release.sh. This script owns
 # only the reproducible benchmark corpus.
-go run ./cmd/benchmark
+GOCACHE="$ROOT_DIR/.gocache" go run ./cmd/benchmark
