@@ -22,6 +22,7 @@
 - [ ] Validate release config: `goreleaser check`.
 - [ ] Validate snapshot archives and checksums: `goreleaser release --snapshot --clean`.
 - [ ] Confirm GitHub Release contains `darwin` and `linux` archives for `amd64` and `arm64`, plus `checksums.txt`.
+- [ ] Confirm prerelease tags such as `v0.1.0-rc.1` are published as GitHub prereleases.
 - [ ] Verify server startup and MCP tool listing with target client.
 - [ ] Confirm audit event format includes actor, reason, scope, timestamp, and outcome.
 - [ ] Confirm runbook owners for provider outage and credential rotation.

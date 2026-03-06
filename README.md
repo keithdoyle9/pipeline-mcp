@@ -66,6 +66,7 @@ When `AUDIT_SIGNING_KEY` is unset, audit entries omit the `signature` field rath
 ## Install
 
 Official release archives are published for `darwin` and `linux` on `amd64` and `arm64`.
+Tags with prerelease identifiers such as `-rc.1` or `-beta.1` are published as GitHub prereleases automatically.
 
 Replace `VERSION` with the release tag you want to install.
 
