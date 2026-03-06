@@ -69,6 +69,38 @@ func TestAppendSignsEventWhenSigningKeyConfigured(t *testing.T) {
 	}
 }
 
+func TestAppendTightensExistingAuditLogPermissionsBeforeWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	store := NewJSONLStore(path, "")
+	event := domain.AuditEvent{
+		EventID:    "evt_3",
+		Tool:       "pipeline.rerun",
+		Actor:      "pipeline-mcp",
+		Repository: "acme/app",
+		RunID:      99,
+		Reason:     "retry",
+		Scope:      "failed_jobs",
+		Timestamp:  "2026-03-06T12:00:00Z",
+		Outcome:    "accepted",
+	}
+
+	if err := store.Append(context.Background(), event); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if perms := info.Mode().Perm(); perms != 0o600 {
+		t.Fatalf("expected audit log permissions 0600, got %04o", perms)
+	}
+}
+
 func readAuditEvent(t *testing.T, path string) domain.AuditEvent {
 	t.Helper()
 

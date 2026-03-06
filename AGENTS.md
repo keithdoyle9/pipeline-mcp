@@ -10,7 +10,7 @@
 - `.github/workflows/`: CI, security scanning, and tagged release automation.
 - `.goreleaser.yml`: release artifact definitions for official binaries.
 - `scripts/` and `tools/`: local automation and helper utilities.
-- `pipeline-mcp-dev-plan.md` and `pipeline-mcp-prd.md`: local planning notes only; keep them untracked and out of public commits.
+- Local planning notes in the repo root are gitignored and should remain untracked.
 
 ## Build, Test, and Development Commands
 - `go mod tidy`: sync module dependencies after import changes.

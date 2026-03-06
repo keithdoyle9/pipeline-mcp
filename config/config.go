@@ -86,11 +86,7 @@ func Load() (*Config, error) {
 }
 
 func defaultUserAgent(version string) string {
-	trimmedVersion := strings.TrimSpace(version)
-	if trimmedVersion == "" {
-		trimmedVersion = buildinfo.Version
-	}
-	return fmt.Sprintf("pipeline-mcp/%s", trimmedVersion)
+	return fmt.Sprintf("pipeline-mcp/%s", strings.TrimSpace(version))
 }
 
 func getEnv(key, defaultValue string) string {

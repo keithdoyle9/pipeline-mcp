@@ -86,13 +86,18 @@ esac
 ARCHIVE="pipeline-mcp_${VERSION}_${OS}_${ARCH}.tar.gz"
 BASE_URL="https://github.com/keithdoyle9/pipeline-mcp/releases/download/${VERSION}"
 
-curl -LO "${BASE_URL}/${ARCHIVE}"
-curl -LO "${BASE_URL}/checksums.txt"
+curl --fail -LO "${BASE_URL}/${ARCHIVE}"
+curl --fail -LO "${BASE_URL}/checksums.txt"
+if command -v sha256sum >/dev/null 2>&1; then
+  grep " ${ARCHIVE}\$" checksums.txt | sha256sum -c -
+else
+  grep " ${ARCHIVE}\$" checksums.txt | shasum -a 256 -c -
+fi
 tar -xzf "${ARCHIVE}"
 install -m 0755 pipeline-mcp /usr/local/bin/pipeline-mcp
 ```
 
-Compare the SHA-256 for `pipeline-mcp_${VERSION}_${OS}_${ARCH}.tar.gz` with the matching line in `checksums.txt` before installing.
+The checksum verification command above must succeed before installing.
 
 The server runs on stdio transport by default.
 

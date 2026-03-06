@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +47,10 @@ func (s *JSONLStore) Append(_ context.Context, event domain.AuditEvent) error {
 		}
 	}
 
+	if err := lockAuditLogPath(s.path); err != nil {
+		return err
+	}
+
 	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open audit log: %w", err)
@@ -66,12 +71,33 @@ func (s *JSONLStore) Append(_ context.Context, event domain.AuditEvent) error {
 	return nil
 }
 
+func lockAuditLogPath(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat audit log: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("audit log path %q is a directory", path)
+	}
+	if info.Mode().Perm() == 0o600 {
+		return nil
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("chmod audit log before append: %w", err)
+	}
+	return nil
+}
+
 func (s *JSONLStore) signEvent(event domain.AuditEvent) string {
 	if len(s.signingKey) == 0 {
 		return ""
 	}
 
 	h := hmac.New(sha256.New, s.signingKey)
+	// Keep this field order stable so signature verification stays deterministic.
 	_, _ = h.Write([]byte(event.EventID))
 	_, _ = h.Write([]byte(event.Tool))
 	_, _ = h.Write([]byte(event.Actor))
