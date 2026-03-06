@@ -57,3 +57,29 @@ jobs:
 
       - name: Build
         run: go build -o bin/pipeline-mcp ./cmd/pipeline-mcp
+
+  release-packaging:
+    name: release-packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install GoReleaser
+        run: GOBIN="$(pwd)/bin" go install github.com/goreleaser/goreleaser/v2@v2.14.1
+
+      - name: Validate release config
+        run: ./bin/goreleaser check
+
+      - name: Validate snapshot archives
+        run: ./bin/goreleaser release --snapshot --clean

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -69,7 +70,7 @@ func Load() (*Config, error) {
 		LogLevel:            level,
 		GitHubAPIBaseURL:    strings.TrimRight(getEnv("GITHUB_API_BASE_URL", "https://api.github.com"), "/"),
 		GitHubReadToken:     firstEnv("GITHUB_READ_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"),
-		GitHubWriteToken:    firstEnv("GITHUB_WRITE_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"),
+		GitHubWriteToken:    strings.TrimSpace(os.Getenv("GITHUB_WRITE_TOKEN")),
 		DisableMutations:    disableMutations,
 		AuditLogPath:        getEnv("AUDIT_LOG_PATH", "var/audit-events.jsonl"),
 		AuditSigningKey:     strings.TrimSpace(os.Getenv("AUDIT_SIGNING_KEY")),
@@ -80,6 +81,10 @@ func Load() (*Config, error) {
 		HTTPTimeout:         time.Duration(httpTimeoutSeconds) * time.Second,
 		UserAgent:           getEnv("USER_AGENT", defaultUserAgent(version)),
 		Actor:               getEnv("ACTOR", "pipeline-mcp"),
+	}
+
+	if err := validate(cfg); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil
@@ -154,4 +159,38 @@ func parseLogLevel(value string) (slog.Level, error) {
 	default:
 		return slog.LevelInfo, fmt.Errorf("unknown log level %q", value)
 	}
+}
+
+func validate(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	if cfg.MaxLogBytes <= 0 {
+		return fmt.Errorf("MAX_LOG_BYTES must be greater than zero")
+	}
+	if cfg.DefaultLookbackDays <= 0 {
+		return fmt.Errorf("DEFAULT_LOOKBACK_DAYS must be greater than zero")
+	}
+	if cfg.MaxHistoricalRuns <= 0 {
+		return fmt.Errorf("MAX_HISTORICAL_RUNS must be greater than zero")
+	}
+	if cfg.HTTPTimeout <= 0 {
+		return fmt.Errorf("HTTP_TIMEOUT_SECONDS must be greater than zero")
+	}
+	if !cfg.DisableMutations && strings.TrimSpace(cfg.GitHubWriteToken) == "" {
+		return fmt.Errorf("GITHUB_WRITE_TOKEN is required when DISABLE_MUTATIONS=false")
+	}
+
+	parsedURL, err := url.Parse(cfg.GitHubAPIBaseURL)
+	if err != nil {
+		return fmt.Errorf("parse GITHUB_API_BASE_URL: %w", err)
+	}
+	if parsedURL.Scheme != "https" && parsedURL.Scheme != "http" {
+		return fmt.Errorf("GITHUB_API_BASE_URL must use http or https")
+	}
+	if strings.TrimSpace(parsedURL.Host) == "" {
+		return fmt.Errorf("GITHUB_API_BASE_URL must include a host")
+	}
+
+	return nil
 }
