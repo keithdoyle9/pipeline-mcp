@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/keithdoyle9/pipeline-mcp/internal/buildinfo"
 )
 
 type Config struct {
@@ -18,6 +20,7 @@ type Config struct {
 	GitHubWriteToken    string
 	DisableMutations    bool
 	AuditLogPath        string
+	AuditSigningKey     string
 	MetricsExportPath   string
 	MaxLogBytes         int64
 	DefaultLookbackDays int
@@ -58,25 +61,36 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parse DISABLE_MUTATIONS: %w", err)
 	}
 
+	version := getEnv("VERSION", buildinfo.Version)
+
 	cfg := &Config{
 		ServerName:          getEnv("SERVER_NAME", "pipeline-mcp"),
-		Version:             getEnv("VERSION", "v0.1.0"),
+		Version:             version,
 		LogLevel:            level,
 		GitHubAPIBaseURL:    strings.TrimRight(getEnv("GITHUB_API_BASE_URL", "https://api.github.com"), "/"),
 		GitHubReadToken:     firstEnv("GITHUB_READ_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"),
 		GitHubWriteToken:    firstEnv("GITHUB_WRITE_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"),
 		DisableMutations:    disableMutations,
 		AuditLogPath:        getEnv("AUDIT_LOG_PATH", "var/audit-events.jsonl"),
+		AuditSigningKey:     strings.TrimSpace(os.Getenv("AUDIT_SIGNING_KEY")),
 		MetricsExportPath:   strings.TrimSpace(os.Getenv("METRICS_EXPORT_PATH")),
 		MaxLogBytes:         maxLogBytes,
 		DefaultLookbackDays: lookback,
 		MaxHistoricalRuns:   maxRuns,
 		HTTPTimeout:         time.Duration(httpTimeoutSeconds) * time.Second,
-		UserAgent:           getEnv("USER_AGENT", "pipeline-mcp/0.1.0"),
+		UserAgent:           getEnv("USER_AGENT", defaultUserAgent(version)),
 		Actor:               getEnv("ACTOR", "pipeline-mcp"),
 	}
 
 	return cfg, nil
+}
+
+func defaultUserAgent(version string) string {
+	trimmedVersion := strings.TrimSpace(version)
+	if trimmedVersion == "" {
+		trimmedVersion = buildinfo.Version
+	}
+	return fmt.Sprintf("pipeline-mcp/%s", trimmedVersion)
 }
 
 func getEnv(key, defaultValue string) string {

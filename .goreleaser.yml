@@ -1,0 +1,30 @@
+version: 2
+
+project_name: pipeline-mcp
+
+builds:
+  - id: pipeline-mcp
+    main: ./cmd/pipeline-mcp
+    binary: pipeline-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/keithdoyle9/pipeline-mcp/internal/buildinfo.Version={{ if .IsSnapshot }}{{ .Version }}{{ else }}{{ .Tag }}{{ end }}
+
+archives:
+  - id: pipeline-mcp
+    ids:
+      - pipeline-mcp
+    name_template: "{{ .ProjectName }}_{{ if .IsSnapshot }}{{ .Version }}{{ else }}{{ .Tag }}{{ end }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
