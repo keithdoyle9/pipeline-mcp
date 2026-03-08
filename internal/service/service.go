@@ -18,17 +18,17 @@ import (
 
 type Service struct {
 	cfg       *config.Config
-	provider  providers.Adapter
+	providers *providers.Registry
 	audit     audit.Store
 	telemetry *telemetry.Collector
 	logger    *slog.Logger
 	now       func() time.Time
 }
 
-func New(cfg *config.Config, provider providers.Adapter, auditStore audit.Store, collector *telemetry.Collector, logger *slog.Logger) *Service {
+func New(cfg *config.Config, registry *providers.Registry, auditStore audit.Store, collector *telemetry.Collector, logger *slog.Logger) *Service {
 	return &Service{
 		cfg:       cfg,
-		provider:  provider,
+		providers: registry,
 		audit:     auditStore,
 		telemetry: collector,
 		logger:    logger,
@@ -37,33 +37,34 @@ func New(cfg *config.Config, provider providers.Adapter, auditStore audit.Store,
 }
 
 type RunReference struct {
+	Provider   string
 	RunURL     string
 	RunID      int64
 	Repository string
 }
 
 func (s *Service) GetRun(ctx context.Context, input RunReference) (*domain.PipelineRun, *domain.ToolError) {
-	resolved, toolErr := s.resolveRunReference(ctx, input, true)
+	provider, resolved, toolErr := s.resolveRunReference(ctx, input, true)
 	if toolErr != nil {
 		return nil, toolErr
 	}
 
-	run, err := s.provider.GetRun(ctx, resolved.Repository, resolved.RunID)
+	run, err := provider.GetRun(ctx, resolved.Repository, resolved.RunID)
 	if err != nil {
-		return nil, s.provider.MapError(err)
+		return nil, provider.MapError(err)
 	}
 
-	jobs, err := s.provider.ListRunJobs(ctx, resolved.Repository, resolved.RunID)
+	jobs, err := provider.ListRunJobs(ctx, resolved.Repository, resolved.RunID)
 	if err != nil {
 		s.logger.Warn("failed to fetch jobs for run", "repository", resolved.Repository, "run_id", resolved.RunID, "error", err)
 	}
 
-	pipelineRun := normalizeRun(s.provider.ProviderID(), run, resolved.Repository, resolved.RunURL, jobs)
+	pipelineRun := normalizeRun(provider.ProviderID(), run, resolved.Repository, resolved.RunURL, jobs)
 	return &pipelineRun, nil
 }
 
 func (s *Service) DiagnoseFailure(ctx context.Context, input RunReference, maxLogBytes int64) (*domain.FailureDiagnostic, []domain.FixRecommendation, *domain.ToolError) {
-	resolved, toolErr := s.resolveRunReference(ctx, input, true)
+	provider, resolved, toolErr := s.resolveRunReference(ctx, input, true)
 	if toolErr != nil {
 		return nil, nil, toolErr
 	}
@@ -75,21 +76,21 @@ func (s *Service) DiagnoseFailure(ctx context.Context, input RunReference, maxLo
 		maxLogBytes = s.cfg.MaxLogBytes
 	}
 
-	run, err := s.provider.GetRun(ctx, resolved.Repository, resolved.RunID)
+	run, err := provider.GetRun(ctx, resolved.Repository, resolved.RunID)
 	if err != nil {
-		return nil, nil, s.provider.MapError(err)
+		return nil, nil, provider.MapError(err)
 	}
-	jobs, err := s.provider.ListRunJobs(ctx, resolved.Repository, resolved.RunID)
+	jobs, err := provider.ListRunJobs(ctx, resolved.Repository, resolved.RunID)
 	if err != nil {
-		return nil, nil, s.provider.MapError(err)
+		return nil, nil, provider.MapError(err)
 	}
-	if diagnostic, recommendations, ok := s.diagnoseMetadataFailure(ctx, resolved.Repository, jobs); ok {
+	if diagnostic, recommendations, ok := s.diagnoseMetadataFailure(ctx, provider, resolved.Repository, jobs); ok {
 		return diagnostic, recommendations, nil
 	}
 
-	logs, err := s.provider.DownloadRunLogs(ctx, resolved.Repository, resolved.RunID, maxLogBytes)
+	logs, err := provider.DownloadRunLogs(ctx, resolved.Repository, resolved.RunID, maxLogBytes)
 	if err != nil {
-		if s.provider.IsLogsUnavailable(err) {
+		if provider.IsLogsUnavailable(err) {
 			return nil, nil, domain.NewToolError(
 				domain.ErrorCodeLogUnavailable,
 				"Workflow logs are unavailable for this run.",
@@ -98,7 +99,7 @@ func (s *Service) DiagnoseFailure(ctx context.Context, input RunReference, maxLo
 				map[string]any{"repository": resolved.Repository, "run_id": resolved.RunID},
 			)
 		}
-		return nil, nil, s.provider.MapError(err)
+		return nil, nil, provider.MapError(err)
 	}
 
 	redacted := analysis.RedactSecrets(logs)
@@ -112,7 +113,7 @@ func (s *Service) DiagnoseFailure(ctx context.Context, input RunReference, maxLo
 var envProtectionPattern = regexp.MustCompile(`Branch "([^"]+)" is not allowed to deploy to ([^ ]+) due to environment protection rules\.`)
 var approvalRequiredPattern = regexp.MustCompile(`(?i)(review required|required reviewers|approved review|approval.+required|not approved by required reviewers|awaiting review)`)
 
-func (s *Service) diagnoseMetadataFailure(ctx context.Context, repository string, jobs []providers.Job) (*domain.FailureDiagnostic, []domain.FixRecommendation, bool) {
+func (s *Service) diagnoseMetadataFailure(ctx context.Context, provider providers.Adapter, repository string, jobs []providers.Job) (*domain.FailureDiagnostic, []domain.FixRecommendation, bool) {
 	for _, job := range jobs {
 		if !strings.EqualFold(job.Conclusion, "failure") {
 			continue
@@ -121,11 +122,11 @@ func (s *Service) diagnoseMetadataFailure(ctx context.Context, repository string
 			continue
 		}
 
-		checkRunID, err := s.provider.ParseCheckRunURL(job.CheckRunURL)
+		checkRunID, err := provider.ParseCheckRunURL(job.CheckRunURL)
 		if err != nil {
 			continue
 		}
-		annotations, err := s.provider.GetCheckRunAnnotations(ctx, repository, checkRunID)
+		annotations, err := provider.GetCheckRunAnnotations(ctx, repository, checkRunID)
 		if err != nil || len(annotations) == 0 {
 			continue
 		}
@@ -152,7 +153,7 @@ func (s *Service) diagnoseMetadataFailure(ctx context.Context, repository string
 			continue
 		}
 
-		checkRun, err := s.provider.GetCheckRun(ctx, repository, checkRunID)
+		checkRun, err := provider.GetCheckRun(ctx, repository, checkRunID)
 		if err == nil && checkRun != nil && checkRun.Deployment != nil {
 			if environment == "" {
 				environment = firstNonEmpty(checkRun.Deployment.OriginalEnvironment, checkRun.Deployment.Environment)
@@ -182,7 +183,7 @@ func (s *Service) diagnoseMetadataFailure(ctx context.Context, repository string
 
 		var policies []providers.BranchPolicy
 		if environment != "the target environment" {
-			policies, err = s.provider.ListDeploymentBranchPolicies(ctx, repository, environment)
+			policies, err = provider.ListDeploymentBranchPolicies(ctx, repository, environment)
 			if err != nil {
 				policies = nil
 			}
@@ -213,10 +214,15 @@ func (s *Service) diagnoseMetadataFailure(ctx context.Context, repository string
 	return nil, nil, false
 }
 
-func (s *Service) AnalyzeFlakyTests(ctx context.Context, repository string, lookbackDays int, workflow string) (*domain.FlakyTestReport, *domain.ToolError) {
-	repository, err := s.provider.ParseRepository(repository)
+func (s *Service) AnalyzeFlakyTests(ctx context.Context, providerID, repository string, lookbackDays int, workflow string) (*domain.FlakyTestReport, *domain.ToolError) {
+	provider, toolErr := s.resolveProvider(providerID)
+	if toolErr != nil {
+		return nil, toolErr
+	}
+
+	repository, err := provider.ParseRepository(repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier for the active provider.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), s.repositoryRemediation(provider.ProviderID()), false, providerDetails(provider.ProviderID(), s.providers.ProviderIDs()))
 	}
 	if lookbackDays <= 0 {
 		lookbackDays = s.cfg.DefaultLookbackDays
@@ -228,28 +234,33 @@ func (s *Service) AnalyzeFlakyTests(ctx context.Context, repository string, look
 	end := s.now().UTC()
 	start := end.AddDate(0, 0, -lookbackDays)
 	created := fmt.Sprintf("%s..%s", start.Format(time.RFC3339), end.Format(time.RFC3339))
-	runs, err := s.provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{Created: created}, s.cfg.MaxHistoricalRuns)
+	runs, err := provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{Created: created}, s.cfg.MaxHistoricalRuns)
 	if err != nil {
-		return nil, s.provider.MapError(err)
+		return nil, provider.MapError(err)
 	}
 	runs = filterByWorkflow(runs, workflow)
 
 	report := analysis.AnalyzeFlakyTests(repository, workflow, lookbackDays, runs, func(runID int64) (string, error) {
-		return s.provider.DownloadRunLogs(ctx, repository, runID, s.cfg.MaxLogBytes/2)
+		return provider.DownloadRunLogs(ctx, repository, runID, s.cfg.MaxLogBytes/2)
 	}, end)
 	return &report, nil
 }
 
-func (s *Service) Rerun(ctx context.Context, repository string, runID int64, failedJobsOnly bool, reason string) (*domain.RerunResult, *domain.ToolError) {
+func (s *Service) Rerun(ctx context.Context, providerID, repository string, runID int64, failedJobsOnly bool, reason string) (*domain.RerunResult, *domain.ToolError) {
+	provider, toolErr := s.resolveProvider(providerID)
+	if toolErr != nil {
+		return nil, toolErr
+	}
+
 	if strings.TrimSpace(reason) == "" {
 		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "reason is required", "Provide a short reason for auditability.", false, nil)
 	}
-	repository, err := s.provider.ParseRepository(repository)
+	repository, err := provider.ParseRepository(repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier for the active provider.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), s.repositoryRemediation(provider.ProviderID()), false, providerDetails(provider.ProviderID(), s.providers.ProviderIDs()))
 	}
 	if runID <= 0 {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "run_id must be greater than zero", "Pass a valid GitHub Actions run id.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "run_id must be greater than zero", fmt.Sprintf("Pass a valid run id for provider %q.", provider.ProviderID()), false, nil)
 	}
 	if s.cfg.DisableMutations {
 		return nil, domain.NewToolError(
@@ -275,11 +286,11 @@ func (s *Service) Rerun(ctx context.Context, repository string, runID int64, fai
 		Actor:       s.cfg.Actor,
 	}
 
-	err = s.provider.Rerun(ctx, repository, runID, failedJobsOnly)
+	err = provider.Rerun(ctx, repository, runID, failedJobsOnly)
 	outcome := "success"
 	if err != nil {
 		outcome = "failed"
-		mapped := s.provider.MapError(err)
+		mapped := provider.MapError(err)
 		_ = s.emitAudit(ctx, repository, runID, reason, scope, outcome)
 		return nil, mapped
 	}
@@ -291,10 +302,15 @@ func (s *Service) Rerun(ctx context.Context, repository string, runID int64, fai
 	return result, nil
 }
 
-func (s *Service) ComparePerformance(ctx context.Context, repository, workflow string, from, to time.Time) (*domain.PipelinePerformanceSnapshot, *domain.ToolError) {
-	repository, err := s.provider.ParseRepository(repository)
+func (s *Service) ComparePerformance(ctx context.Context, providerID, repository, workflow string, from, to time.Time) (*domain.PipelinePerformanceSnapshot, *domain.ToolError) {
+	provider, toolErr := s.resolveProvider(providerID)
+	if toolErr != nil {
+		return nil, toolErr
+	}
+
+	repository, err := provider.ParseRepository(repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier for the active provider.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), s.repositoryRemediation(provider.ProviderID()), false, providerDetails(provider.ProviderID(), s.providers.ProviderIDs()))
 	}
 	if to.Before(from) || to.Equal(from) {
 		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "to must be after from", "Provide a time range where to > from.", false, nil)
@@ -307,13 +323,13 @@ func (s *Service) ComparePerformance(ctx context.Context, repository, workflow s
 	currentRange := fmt.Sprintf("%s..%s", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
 	baselineRange := fmt.Sprintf("%s..%s", baselineFrom.UTC().Format(time.RFC3339), baselineTo.UTC().Format(time.RFC3339))
 
-	currentRuns, err := s.provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{Created: currentRange}, s.cfg.MaxHistoricalRuns)
+	currentRuns, err := provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{Created: currentRange}, s.cfg.MaxHistoricalRuns)
 	if err != nil {
-		return nil, s.provider.MapError(err)
+		return nil, provider.MapError(err)
 	}
-	baselineRuns, err := s.provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{Created: baselineRange}, s.cfg.MaxHistoricalRuns)
+	baselineRuns, err := provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{Created: baselineRange}, s.cfg.MaxHistoricalRuns)
 	if err != nil {
-		return nil, s.provider.MapError(err)
+		return nil, provider.MapError(err)
 	}
 	currentRuns = filterByWorkflow(currentRuns, workflow)
 	baselineRuns = filterByWorkflow(baselineRuns, workflow)
@@ -337,51 +353,63 @@ func (s *Service) emitAudit(ctx context.Context, repository string, runID int64,
 	return s.audit.Append(ctx, event)
 }
 
-func (s *Service) resolveRunReference(ctx context.Context, ref RunReference, allowRepositoryOnly bool) (*providers.RunLocator, *domain.ToolError) {
+func (s *Service) resolveRunReference(ctx context.Context, ref RunReference, allowRepositoryOnly bool) (providers.Adapter, *providers.RunLocator, *domain.ToolError) {
 	if strings.TrimSpace(ref.RunURL) != "" {
-		locator, err := s.provider.ParseRunURL(ref.RunURL)
-		if err != nil {
-			return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid pipeline run URL for the active provider.", false, nil)
+		provider, locator, toolErr := s.resolveProviderForRunURL(ref.Provider, ref.RunURL)
+		if toolErr != nil {
+			return nil, nil, toolErr
 		}
-		return locator, nil
+		return provider, locator, nil
 	}
 	if ref.RunID <= 0 {
 		if allowRepositoryOnly && strings.TrimSpace(ref.Repository) != "" {
-			return s.resolveLatestFailedRun(ctx, ref.Repository)
+			provider, toolErr := s.resolveProvider(ref.Provider)
+			if toolErr != nil {
+				return nil, nil, toolErr
+			}
+			locator, toolErr := s.resolveLatestFailedRun(ctx, provider, ref.Repository)
+			if toolErr != nil {
+				return nil, nil, toolErr
+			}
+			return provider, locator, nil
 		}
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "either run_url or run_id must be provided", "Provide a run_url, or both run_id and repository, or repository alone to use the latest failed run.", false, nil)
+		return nil, nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "either run_url or run_id must be provided", "Provide a run_url, or both run_id and repository, or repository alone to use the latest failed run.", false, nil)
 	}
-	repository, err := s.provider.ParseRepository(ref.Repository)
+	provider, toolErr := s.resolveProvider(ref.Provider)
+	if toolErr != nil {
+		return nil, nil, toolErr
+	}
+	repository, err := provider.ParseRepository(ref.Repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier when using run_id.", false, nil)
+		return nil, nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), fmt.Sprintf("Provide a valid repository identifier when using run_id with provider %q.", provider.ProviderID()), false, providerDetails(provider.ProviderID(), s.providers.ProviderIDs()))
 	}
-	return &providers.RunLocator{Repository: repository, RunID: ref.RunID, RunURL: s.provider.RunURL(repository, ref.RunID)}, nil
+	return provider, &providers.RunLocator{Repository: repository, RunID: ref.RunID, RunURL: provider.RunURL(repository, ref.RunID)}, nil
 }
 
-func (s *Service) resolveLatestFailedRun(ctx context.Context, repository string) (*providers.RunLocator, *domain.ToolError) {
-	repository, err := s.provider.ParseRepository(repository)
+func (s *Service) resolveLatestFailedRun(ctx context.Context, provider providers.Adapter, repository string) (*providers.RunLocator, *domain.ToolError) {
+	repository, err := provider.ParseRepository(repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier for the active provider.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), s.repositoryRemediation(provider.ProviderID()), false, providerDetails(provider.ProviderID(), s.providers.ProviderIDs()))
 	}
 
-	runs, err := s.provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{PerPage: 1, Status: "failure"}, 1)
+	runs, err := provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{PerPage: 1, Status: "failure"}, 1)
 	if err != nil {
-		return nil, s.provider.MapError(err)
+		return nil, provider.MapError(err)
 	}
 	if len(runs) == 0 {
 		return nil, domain.NewToolError(
 			domain.ErrorCodeInvalidInput,
 			"No failed workflow runs were found for this repository.",
-			"Provide a specific run_url, or retry after a failed GitHub Actions run exists in the repository.",
+			fmt.Sprintf("Provide a specific run_url, or retry after a failed run exists for provider %q.", provider.ProviderID()),
 			false,
-			map[string]any{"repository": repository},
+			providerDetails(provider.ProviderID(), s.providers.ProviderIDs(), map[string]any{"repository": repository}),
 		)
 	}
 
 	run := runs[0]
 	runURL := strings.TrimSpace(run.RunURL)
 	if runURL == "" {
-		runURL = s.provider.RunURL(repository, run.ID)
+		runURL = provider.RunURL(repository, run.ID)
 	}
 
 	return &providers.RunLocator{
@@ -389,6 +417,58 @@ func (s *Service) resolveLatestFailedRun(ctx context.Context, repository string)
 		RunID:      run.ID,
 		RunURL:     runURL,
 	}, nil
+}
+
+func (s *Service) resolveProvider(providerID string) (providers.Adapter, *domain.ToolError) {
+	adapter, err := s.providers.Resolve(providerID)
+	if err != nil {
+		return nil, domain.NewToolError(
+			domain.ErrorCodeInvalidInput,
+			err.Error(),
+			fmt.Sprintf("Omit provider to use the default %q, or choose one of: %s.", s.providers.DefaultProviderID(), strings.Join(s.providers.ProviderIDs(), ", ")),
+			false,
+			providerDetails(strings.TrimSpace(providerID), s.providers.ProviderIDs()),
+		)
+	}
+	return adapter, nil
+}
+
+func (s *Service) resolveProviderForRunURL(providerID, runURL string) (providers.Adapter, *providers.RunLocator, *domain.ToolError) {
+	adapter, locator, err := s.providers.ResolveRunURL(providerID, runURL)
+	if err != nil {
+		return nil, nil, domain.NewToolError(
+			domain.ErrorCodeInvalidInput,
+			err.Error(),
+			s.runURLRemediation(strings.TrimSpace(providerID)),
+			false,
+			providerDetails(strings.TrimSpace(providerID), s.providers.ProviderIDs(), map[string]any{"run_url": runURL}),
+		)
+	}
+	return adapter, locator, nil
+}
+
+func (s *Service) repositoryRemediation(providerID string) string {
+	return fmt.Sprintf("Provide a valid repository identifier for provider %q.", providerID)
+}
+
+func (s *Service) runURLRemediation(providerID string) string {
+	if providerID != "" {
+		return fmt.Sprintf("Provide a valid pipeline run URL for provider %q.", providerID)
+	}
+	return fmt.Sprintf("Provide a valid pipeline run URL, or set provider explicitly. Supported providers: %s.", strings.Join(s.providers.ProviderIDs(), ", "))
+}
+
+func providerDetails(selectedProvider string, supportedProviders []string, extras ...map[string]any) map[string]any {
+	details := map[string]any{
+		"provider":            selectedProvider,
+		"supported_providers": supportedProviders,
+	}
+	for _, extra := range extras {
+		for key, value := range extra {
+			details[key] = value
+		}
+	}
+	return details
 }
 
 func normalizeRun(providerID string, run *providers.Run, repository, resolvedRunURL string, jobs []providers.Job) domain.PipelineRun {
