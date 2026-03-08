@@ -78,10 +78,10 @@ For least-privilege token setup and release operations, see [docs/operator-guide
 Official release archives are published for `darwin` and `linux` on `amd64` and `arm64`.
 Tags with prerelease identifiers such as `-rc.1` or `-beta.1` are published as GitHub prereleases automatically.
 
-Replace `VERSION` with the release tag you want to install.
+Current prerelease example:
 
 ```bash
-VERSION=v0.2.0
+VERSION=v0.1.0-rc.1
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
