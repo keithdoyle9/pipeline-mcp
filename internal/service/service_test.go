@@ -12,6 +12,7 @@ import (
 	"github.com/keithdoyle9/pipeline-mcp/config"
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
 	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 	"github.com/keithdoyle9/pipeline-mcp/internal/telemetry"
 )
 
@@ -82,6 +83,108 @@ type memoryAuditStore struct {
 func (m *memoryAuditStore) Append(_ context.Context, event domain.AuditEvent) error {
 	m.events = append(m.events, event)
 	return nil
+}
+
+type seamTestProvider struct{}
+
+func (seamTestProvider) ProviderID() string {
+	return "gitlab_ci"
+}
+
+func (seamTestProvider) ParseRepository(repository string) (string, string, error) {
+	if repository != "acme/app" {
+		return "", "", errors.New("unexpected repository")
+	}
+	return "acme", "app", nil
+}
+
+func (seamTestProvider) ParseRunURL(string) (*providers.RunLocator, error) {
+	return nil, errors.New("unexpected ParseRunURL call")
+}
+
+func (seamTestProvider) ParseCheckRunURL(string) (int64, error) {
+	return 0, errors.New("unexpected ParseCheckRunURL call")
+}
+
+func (seamTestProvider) RunURL(owner, repo string, runID int64) string {
+	return "https://ci.example/" + owner + "/" + repo + "/runs/55"
+}
+
+func (seamTestProvider) GetRun(context.Context, string, string, int64) (*providers.Run, error) {
+	return &providers.Run{
+		ID:         55,
+		Name:       "pipeline",
+		RunURL:     "https://ci.example/acme/app/runs/55",
+		HeadSHA:    "abc123",
+		Conclusion: "failure",
+	}, nil
+}
+
+func (seamTestProvider) ListRunJobs(context.Context, string, string, int64) ([]providers.Job, error) {
+	return []providers.Job{{Name: "unit", Conclusion: "failure"}}, nil
+}
+
+func (seamTestProvider) DownloadRunLogs(context.Context, string, string, int64, int64) (string, error) {
+	return "", nil
+}
+
+func (seamTestProvider) ListRepositoryRuns(context.Context, string, string, providers.ListRunsOptions, int) ([]providers.Run, error) {
+	return nil, nil
+}
+
+func (seamTestProvider) GetCheckRun(context.Context, string, string, int64) (*providers.CheckRun, error) {
+	return nil, nil
+}
+
+func (seamTestProvider) GetCheckRunAnnotations(context.Context, string, string, int64) ([]providers.CheckRunAnnotation, error) {
+	return nil, nil
+}
+
+func (seamTestProvider) ListDeploymentBranchPolicies(context.Context, string, string, string) ([]providers.BranchPolicy, error) {
+	return nil, nil
+}
+
+func (seamTestProvider) Rerun(context.Context, string, string, int64, bool) error {
+	return nil
+}
+
+func (seamTestProvider) IsLogsUnavailable(error) bool {
+	return false
+}
+
+func (seamTestProvider) MapError(err error) *domain.ToolError {
+	if err == nil {
+		return nil
+	}
+	return domain.NewToolError(domain.ErrorCodeInternal, err.Error(), "retry", true, nil)
+}
+
+func TestGetRunUsesProviderAdapterMetadata(t *testing.T) {
+	svc := &Service{
+		cfg:       testConfig(true),
+		provider:  seamTestProvider{},
+		audit:     &memoryAuditStore{},
+		telemetry: telemetry.NewCollector(""),
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:       time.Now,
+	}
+
+	run, toolErr := svc.GetRun(context.Background(), RunReference{Repository: "acme/app", RunID: 55})
+	if toolErr != nil {
+		t.Fatalf("unexpected tool error: %+v", toolErr)
+	}
+	if run == nil {
+		t.Fatal("expected run")
+	}
+	if run.Provider != "gitlab_ci" {
+		t.Fatalf("expected provider from adapter, got %q", run.Provider)
+	}
+	if run.RunURL != "https://ci.example/acme/app/runs/55" {
+		t.Fatalf("expected provider run url, got %q", run.RunURL)
+	}
+	if run.FailureReason != "job failed: unit" {
+		t.Fatalf("expected normalized failure reason, got %q", run.FailureReason)
+	}
 }
 
 func TestDiagnoseFailureSuccess(t *testing.T) {
@@ -191,7 +294,7 @@ func TestRerunRequiresReasonAndAudit(t *testing.T) {
 
 	svc := &Service{
 		cfg:       cfg,
-		github:    mock,
+		provider:  githubapi.NewProviderAdapter(mock, cfg.GitHubAPIBaseURL),
 		audit:     auditStore,
 		telemetry: telemetry.NewCollector(""),
 		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -530,11 +633,11 @@ func TestDiagnoseFailureRepositoryOnlyReturnsHelpfulErrorWhenNoFailuresExist(t *
 	}
 }
 
-func newTestService(client GitHubClient, disableMutations bool) *Service {
+func newTestService(client *mockGitHubClient, disableMutations bool) *Service {
 	cfg := testConfig(disableMutations)
 	return &Service{
 		cfg:       cfg,
-		github:    client,
+		provider:  githubapi.NewProviderAdapter(client, cfg.GitHubAPIBaseURL),
 		audit:     &memoryAuditStore{},
 		telemetry: telemetry.NewCollector(""),
 		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),

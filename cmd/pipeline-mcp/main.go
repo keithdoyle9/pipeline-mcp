@@ -36,8 +36,9 @@ func run() error {
 
 	telemetryCollector := telemetry.NewCollector(cfg.MetricsExportPath)
 	ghClient := githubapi.NewClient(cfg.GitHubAPIBaseURL, cfg.GitHubReadToken, cfg.GitHubWriteToken, cfg.UserAgent, cfg.HTTPTimeout)
+	ghProvider := githubapi.NewProviderAdapter(ghClient, cfg.GitHubAPIBaseURL)
 	auditStore := audit.NewJSONLStore(cfg.AuditLogPath, cfg.AuditSigningKey)
-	svc := service.New(cfg, ghClient, auditStore, telemetryCollector, logger)
+	svc := service.New(cfg, ghProvider, auditStore, telemetryCollector, logger)
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    cfg.ServerName,

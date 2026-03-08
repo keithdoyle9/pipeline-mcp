@@ -15,6 +15,7 @@ import (
 	"github.com/keithdoyle9/pipeline-mcp/internal/analysis"
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
 	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 	"github.com/keithdoyle9/pipeline-mcp/internal/service"
 	"github.com/keithdoyle9/pipeline-mcp/internal/telemetry"
 )
@@ -151,7 +152,7 @@ func evaluateFixture(fixture caseFixture) (benchmarkCaseResult, error) {
 	}
 	svc := service.New(
 		cfg,
-		benchmarkGitHubClient{fixture: fixture},
+		githubapi.NewProviderAdapter(benchmarkGitHubClient{fixture: fixture}, cfg.GitHubAPIBaseURL),
 		noopAuditStore{},
 		telemetry.NewCollector(""),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -214,7 +215,7 @@ func topCategoriesForFixture(fixture caseFixture, diagnostic *domain.FailureDiag
 	}
 
 	categories := make([]string, 0, 3)
-	for _, candidate := range analysis.RankFailureDiagnoses(fixture.Logs, fixture.Jobs) {
+	for _, candidate := range analysis.RankFailureDiagnoses(fixture.Logs, providerJobsFromGitHub(fixture.Jobs)) {
 		categories = append(categories, candidate.FailureCategory)
 		if len(categories) == 3 {
 			break
@@ -224,6 +225,25 @@ func topCategoriesForFixture(fixture caseFixture, diagnostic *domain.FailureDiag
 		return []string{diagnostic.FailureCategory}
 	}
 	return categories
+}
+
+func providerJobsFromGitHub(jobs []githubapi.Job) []providers.Job {
+	out := make([]providers.Job, 0, len(jobs))
+	for _, job := range jobs {
+		out = append(out, providers.Job{
+			ID:          job.ID,
+			Name:        job.Name,
+			Status:      job.Status,
+			Conclusion:  job.Conclusion,
+			HeadBranch:  job.HeadBranch,
+			StartedAt:   job.StartedAt,
+			CompletedAt: job.CompletedAt,
+			RunURL:      job.HTMLURL,
+			CheckRunURL: job.CheckRunURL,
+			RunnerID:    job.RunnerID,
+		})
+	}
+	return out
 }
 
 func containsCategory(categories []string, want string) bool {

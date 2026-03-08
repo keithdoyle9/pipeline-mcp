@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
-	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 )
 
 var testNamePatterns = []*regexp.Regexp{
@@ -27,7 +27,7 @@ type flakyAggregate struct {
 func AnalyzeFlakyTests(
 	repository, workflow string,
 	lookbackDays int,
-	runs []githubapi.WorkflowRun,
+	runs []providers.Run,
 	fetchLogs LogFetcher,
 	now time.Time,
 ) domain.FlakyTestReport {
