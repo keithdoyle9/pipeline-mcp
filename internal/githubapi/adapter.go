@@ -37,8 +37,12 @@ func (a *ProviderAdapter) ProviderID() string {
 	return domain.ProviderGitHub
 }
 
-func (a *ProviderAdapter) ParseRepository(repository string) (owner string, repo string, err error) {
-	return ParseRepository(repository)
+func (a *ProviderAdapter) ParseRepository(repository string) (string, error) {
+	owner, repo, err := ParseRepository(repository)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/%s", owner, repo), nil
 }
 
 func (a *ProviderAdapter) ParseRunURL(raw string) (*providers.RunLocator, error) {
@@ -47,10 +51,9 @@ func (a *ProviderAdapter) ParseRunURL(raw string) (*providers.RunLocator, error)
 		return nil, err
 	}
 	return &providers.RunLocator{
-		Owner:  locator.Owner,
-		Repo:   locator.Repo,
-		RunID:  locator.RunID,
-		RunURL: locator.RunURL,
+		Repository: locator.Repository(),
+		RunID:      locator.RunID,
+		RunURL:     locator.RunURL,
 	}, nil
 }
 
@@ -61,11 +64,19 @@ func (a *ProviderAdapter) ParseCheckRunURL(raw string) (int64, error) {
 	return ParseCheckRunURLForBase(raw, a.apiBaseURL)
 }
 
-func (a *ProviderAdapter) RunURL(owner, repo string, runID int64) string {
+func (a *ProviderAdapter) RunURL(repository string, runID int64) string {
+	owner, repo, err := ParseRepository(repository)
+	if err != nil {
+		return ""
+	}
 	return fmt.Sprintf("https://github.com/%s/%s/actions/runs/%d", owner, repo, runID)
 }
 
-func (a *ProviderAdapter) GetRun(ctx context.Context, owner, repo string, runID int64) (*providers.Run, error) {
+func (a *ProviderAdapter) GetRun(ctx context.Context, repository string, runID int64) (*providers.Run, error) {
+	owner, repo, err := a.ownerRepo(repository)
+	if err != nil {
+		return nil, err
+	}
 	run, err := a.client.GetRun(ctx, owner, repo, runID)
 	if err != nil || run == nil {
 		return nil, err
@@ -73,7 +84,11 @@ func (a *ProviderAdapter) GetRun(ctx context.Context, owner, repo string, runID 
 	return toProviderRun(run), nil
 }
 
-func (a *ProviderAdapter) ListRunJobs(ctx context.Context, owner, repo string, runID int64) ([]providers.Job, error) {
+func (a *ProviderAdapter) ListRunJobs(ctx context.Context, repository string, runID int64) ([]providers.Job, error) {
+	owner, repo, err := a.ownerRepo(repository)
+	if err != nil {
+		return nil, err
+	}
 	jobs, err := a.client.ListRunJobs(ctx, owner, repo, runID)
 	if err != nil {
 		return nil, err
@@ -81,11 +96,19 @@ func (a *ProviderAdapter) ListRunJobs(ctx context.Context, owner, repo string, r
 	return toProviderJobs(jobs), nil
 }
 
-func (a *ProviderAdapter) DownloadRunLogs(ctx context.Context, owner, repo string, runID int64, maxBytes int64) (string, error) {
+func (a *ProviderAdapter) DownloadRunLogs(ctx context.Context, repository string, runID int64, maxBytes int64) (string, error) {
+	owner, repo, err := a.ownerRepo(repository)
+	if err != nil {
+		return "", err
+	}
 	return a.client.DownloadRunLogs(ctx, owner, repo, runID, maxBytes)
 }
 
-func (a *ProviderAdapter) ListRepositoryRuns(ctx context.Context, owner, repo string, opts providers.ListRunsOptions, maxRuns int) ([]providers.Run, error) {
+func (a *ProviderAdapter) ListRepositoryRuns(ctx context.Context, repository string, opts providers.ListRunsOptions, maxRuns int) ([]providers.Run, error) {
+	owner, repo, err := a.ownerRepo(repository)
+	if err != nil {
+		return nil, err
+	}
 	runs, err := a.client.ListRepositoryRuns(ctx, owner, repo, ListRunsOptions{
 		PerPage: opts.PerPage,
 		Page:    opts.Page,
@@ -100,7 +123,11 @@ func (a *ProviderAdapter) ListRepositoryRuns(ctx context.Context, owner, repo st
 	return toProviderRuns(runs), nil
 }
 
-func (a *ProviderAdapter) GetCheckRun(ctx context.Context, owner, repo string, checkRunID int64) (*providers.CheckRun, error) {
+func (a *ProviderAdapter) GetCheckRun(ctx context.Context, repository string, checkRunID int64) (*providers.CheckRun, error) {
+	owner, repo, err := a.ownerRepo(repository)
+	if err != nil {
+		return nil, err
+	}
 	checkRun, err := a.client.GetCheckRun(ctx, owner, repo, checkRunID)
 	if err != nil || checkRun == nil {
 		return nil, err
@@ -108,7 +135,11 @@ func (a *ProviderAdapter) GetCheckRun(ctx context.Context, owner, repo string, c
 	return toProviderCheckRun(checkRun), nil
 }
 
-func (a *ProviderAdapter) GetCheckRunAnnotations(ctx context.Context, owner, repo string, checkRunID int64) ([]providers.CheckRunAnnotation, error) {
+func (a *ProviderAdapter) GetCheckRunAnnotations(ctx context.Context, repository string, checkRunID int64) ([]providers.CheckRunAnnotation, error) {
+	owner, repo, err := a.ownerRepo(repository)
+	if err != nil {
+		return nil, err
+	}
 	annotations, err := a.client.GetCheckRunAnnotations(ctx, owner, repo, checkRunID)
 	if err != nil {
 		return nil, err
@@ -116,7 +147,11 @@ func (a *ProviderAdapter) GetCheckRunAnnotations(ctx context.Context, owner, rep
 	return toProviderAnnotations(annotations), nil
 }
 
-func (a *ProviderAdapter) ListDeploymentBranchPolicies(ctx context.Context, owner, repo, environment string) ([]providers.BranchPolicy, error) {
+func (a *ProviderAdapter) ListDeploymentBranchPolicies(ctx context.Context, repository, environment string) ([]providers.BranchPolicy, error) {
+	owner, repo, err := a.ownerRepo(repository)
+	if err != nil {
+		return nil, err
+	}
 	policies, err := a.client.ListDeploymentBranchPolicies(ctx, owner, repo, environment)
 	if err != nil {
 		return nil, err
@@ -124,7 +159,11 @@ func (a *ProviderAdapter) ListDeploymentBranchPolicies(ctx context.Context, owne
 	return toProviderPolicies(policies), nil
 }
 
-func (a *ProviderAdapter) Rerun(ctx context.Context, owner, repo string, runID int64, failedJobsOnly bool) error {
+func (a *ProviderAdapter) Rerun(ctx context.Context, repository string, runID int64, failedJobsOnly bool) error {
+	owner, repo, err := a.ownerRepo(repository)
+	if err != nil {
+		return err
+	}
 	return a.client.Rerun(ctx, owner, repo, runID, failedJobsOnly)
 }
 
@@ -158,6 +197,10 @@ func (a *ProviderAdapter) MapError(err error) *domain.ToolError {
 		return domain.NewToolError(domain.ErrorCodeProviderUnavailable, "GitHub API is unavailable.", "Retry with exponential backoff and check provider status.", true, map[string]any{"error": err.Error()})
 	}
 	return domain.NewToolError(domain.ErrorCodeInternal, "Unexpected internal error.", "Check server logs and retry.", true, map[string]any{"error": err.Error()})
+}
+
+func (a *ProviderAdapter) ownerRepo(repository string) (string, string, error) {
+	return ParseRepository(repository)
 }
 
 func toProviderRun(run *WorkflowRun) *providers.Run {

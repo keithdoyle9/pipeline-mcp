@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -85,91 +86,118 @@ func (m *memoryAuditStore) Append(_ context.Context, event domain.AuditEvent) er
 	return nil
 }
 
-type seamTestProvider struct{}
+type seamTestProvider struct {
+	expectedRepository string
+	listRuns           []providers.Run
+	run                *providers.Run
+	jobs               []providers.Job
+	parsedRepository   string
+	fetchedRepository  string
+	listedRepository   string
+}
 
-func (seamTestProvider) ProviderID() string {
+func (p *seamTestProvider) ProviderID() string {
 	return "gitlab_ci"
 }
 
-func (seamTestProvider) ParseRepository(repository string) (string, string, error) {
-	if repository != "acme/app" {
-		return "", "", errors.New("unexpected repository")
+func (p *seamTestProvider) ParseRepository(repository string) (string, error) {
+	if repository != p.expectedRepository {
+		return "", errors.New("unexpected repository")
 	}
-	return "acme", "app", nil
+	p.parsedRepository = repository
+	return repository, nil
 }
 
-func (seamTestProvider) ParseRunURL(string) (*providers.RunLocator, error) {
+func (p *seamTestProvider) ParseRunURL(string) (*providers.RunLocator, error) {
 	return nil, errors.New("unexpected ParseRunURL call")
 }
 
-func (seamTestProvider) ParseCheckRunURL(string) (int64, error) {
+func (p *seamTestProvider) ParseCheckRunURL(string) (int64, error) {
 	return 0, errors.New("unexpected ParseCheckRunURL call")
 }
 
-func (seamTestProvider) RunURL(owner, repo string, runID int64) string {
-	return "https://ci.example/" + owner + "/" + repo + "/runs/55"
+func (p *seamTestProvider) RunURL(repository string, runID int64) string {
+	return "https://ci.example/" + repository + "/runs/" + strconv.FormatInt(runID, 10)
 }
 
-func (seamTestProvider) GetRun(context.Context, string, string, int64) (*providers.Run, error) {
+func (p *seamTestProvider) GetRun(_ context.Context, repository string, _ int64) (*providers.Run, error) {
+	p.fetchedRepository = repository
+	if p.run != nil {
+		return p.run, nil
+	}
 	return &providers.Run{
 		ID:         55,
 		Name:       "pipeline",
-		RunURL:     "https://ci.example/acme/app/runs/55",
 		HeadSHA:    "abc123",
 		Conclusion: "failure",
 	}, nil
 }
 
-func (seamTestProvider) ListRunJobs(context.Context, string, string, int64) ([]providers.Job, error) {
+func (p *seamTestProvider) ListRunJobs(_ context.Context, repository string, _ int64) ([]providers.Job, error) {
+	p.fetchedRepository = repository
+	if p.jobs != nil {
+		return p.jobs, nil
+	}
 	return []providers.Job{{Name: "unit", Conclusion: "failure"}}, nil
 }
 
-func (seamTestProvider) DownloadRunLogs(context.Context, string, string, int64, int64) (string, error) {
+func (p *seamTestProvider) DownloadRunLogs(context.Context, string, int64, int64) (string, error) {
 	return "", nil
 }
 
-func (seamTestProvider) ListRepositoryRuns(context.Context, string, string, providers.ListRunsOptions, int) ([]providers.Run, error) {
+func (p *seamTestProvider) ListRepositoryRuns(_ context.Context, repository string, _ providers.ListRunsOptions, _ int) ([]providers.Run, error) {
+	p.listedRepository = repository
+	return p.listRuns, nil
+}
+
+func (p *seamTestProvider) GetCheckRun(context.Context, string, int64) (*providers.CheckRun, error) {
 	return nil, nil
 }
 
-func (seamTestProvider) GetCheckRun(context.Context, string, string, int64) (*providers.CheckRun, error) {
+func (p *seamTestProvider) GetCheckRunAnnotations(context.Context, string, int64) ([]providers.CheckRunAnnotation, error) {
 	return nil, nil
 }
 
-func (seamTestProvider) GetCheckRunAnnotations(context.Context, string, string, int64) ([]providers.CheckRunAnnotation, error) {
+func (p *seamTestProvider) ListDeploymentBranchPolicies(context.Context, string, string) ([]providers.BranchPolicy, error) {
 	return nil, nil
 }
 
-func (seamTestProvider) ListDeploymentBranchPolicies(context.Context, string, string, string) ([]providers.BranchPolicy, error) {
-	return nil, nil
-}
-
-func (seamTestProvider) Rerun(context.Context, string, string, int64, bool) error {
+func (p *seamTestProvider) Rerun(context.Context, string, int64, bool) error {
 	return nil
 }
 
-func (seamTestProvider) IsLogsUnavailable(error) bool {
+func (p *seamTestProvider) IsLogsUnavailable(error) bool {
 	return false
 }
 
-func (seamTestProvider) MapError(err error) *domain.ToolError {
+func (p *seamTestProvider) MapError(err error) *domain.ToolError {
 	if err == nil {
 		return nil
 	}
 	return domain.NewToolError(domain.ErrorCodeInternal, err.Error(), "retry", true, nil)
 }
 
-func TestGetRunUsesProviderAdapterMetadata(t *testing.T) {
+func TestGetRunUsesProviderNativeRepositoryAndResolvedRunURL(t *testing.T) {
+	provider := &seamTestProvider{
+		expectedRepository: "group/subgroup/project",
+		run: &providers.Run{
+			ID:         55,
+			Name:       "pipeline",
+			HeadSHA:    "abc123",
+			Conclusion: "failure",
+		},
+		jobs: []providers.Job{{Name: "unit", Conclusion: "failure"}},
+	}
 	svc := &Service{
 		cfg:       testConfig(true),
-		provider:  seamTestProvider{},
+		provider:  provider,
 		audit:     &memoryAuditStore{},
 		telemetry: telemetry.NewCollector(""),
 		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		now:       time.Now,
 	}
 
-	run, toolErr := svc.GetRun(context.Background(), RunReference{Repository: "acme/app", RunID: 55})
+	run, toolErr := svc.GetRun(context.Background(), RunReference{Repository: "group/subgroup/project", RunID: 55})
 	if toolErr != nil {
 		t.Fatalf("unexpected tool error: %+v", toolErr)
 	}
@@ -179,11 +207,60 @@ func TestGetRunUsesProviderAdapterMetadata(t *testing.T) {
 	if run.Provider != "gitlab_ci" {
 		t.Fatalf("expected provider from adapter, got %q", run.Provider)
 	}
-	if run.RunURL != "https://ci.example/acme/app/runs/55" {
+	if provider.parsedRepository != "group/subgroup/project" {
+		t.Fatalf("expected ParseRepository to keep full path, got %q", provider.parsedRepository)
+	}
+	if provider.fetchedRepository != "group/subgroup/project" {
+		t.Fatalf("expected provider-native repository path, got %q", provider.fetchedRepository)
+	}
+	if run.Repository != "group/subgroup/project" {
+		t.Fatalf("expected repository to round-trip, got %q", run.Repository)
+	}
+	if run.RunURL != "https://ci.example/group/subgroup/project/runs/55" {
 		t.Fatalf("expected provider run url, got %q", run.RunURL)
 	}
 	if run.FailureReason != "job failed: unit" {
 		t.Fatalf("expected normalized failure reason, got %q", run.FailureReason)
+	}
+}
+
+func TestGetRunRepositoryOnlyFallsBackToResolvedRunURL(t *testing.T) {
+	provider := &seamTestProvider{
+		expectedRepository: "group/subgroup/project",
+		listRuns: []providers.Run{{
+			ID:         89,
+			Name:       "pipeline",
+			Conclusion: "failure",
+		}},
+		run: &providers.Run{
+			ID:         89,
+			Name:       "pipeline",
+			HeadSHA:    "abc123",
+			Conclusion: "failure",
+		},
+		jobs: []providers.Job{{Name: "unit", Conclusion: "failure"}},
+	}
+	svc := &Service{
+		cfg:       testConfig(true),
+		provider:  provider,
+		audit:     &memoryAuditStore{},
+		telemetry: telemetry.NewCollector(""),
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:       time.Now,
+	}
+
+	run, toolErr := svc.GetRun(context.Background(), RunReference{Repository: "group/subgroup/project"})
+	if toolErr != nil {
+		t.Fatalf("unexpected tool error: %+v", toolErr)
+	}
+	if provider.listedRepository != "group/subgroup/project" {
+		t.Fatalf("expected latest-run lookup to preserve full repository path, got %q", provider.listedRepository)
+	}
+	if run == nil {
+		t.Fatal("expected run")
+	}
+	if run.RunURL != "https://ci.example/group/subgroup/project/runs/89" {
+		t.Fatalf("expected resolved run url fallback, got %q", run.RunURL)
 	}
 }
 
