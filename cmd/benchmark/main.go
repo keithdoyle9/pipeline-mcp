@@ -152,7 +152,7 @@ func evaluateFixture(fixture caseFixture) (benchmarkCaseResult, error) {
 	}
 	svc := service.New(
 		cfg,
-		githubapi.NewProviderAdapter(benchmarkGitHubClient{fixture: fixture}, cfg.GitHubAPIBaseURL),
+		mustProviderRegistry(githubapi.NewProviderAdapter(benchmarkGitHubClient{fixture: fixture}, cfg.GitHubAPIBaseURL)),
 		noopAuditStore{},
 		telemetry.NewCollector(""),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -175,6 +175,14 @@ func evaluateFixture(fixture caseFixture) (benchmarkCaseResult, error) {
 		MatchedTop3:      containsCategory(top3, fixture.ExpectedCategory),
 		LatencyMS:        latencyMS,
 	}, nil
+}
+
+func mustProviderRegistry(adapter providers.Adapter) *providers.Registry {
+	registry, err := providers.NewRegistry(adapter.ProviderID(), adapter)
+	if err != nil {
+		panic(err)
+	}
+	return registry
 }
 
 func summarizeResults(results []benchmarkCaseResult) benchmarkReport {

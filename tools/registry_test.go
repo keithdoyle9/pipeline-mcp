@@ -11,6 +11,7 @@ import (
 	"github.com/keithdoyle9/pipeline-mcp/config"
 	"github.com/keithdoyle9/pipeline-mcp/internal/audit"
 	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 	"github.com/keithdoyle9/pipeline-mcp/internal/service"
 	"github.com/keithdoyle9/pipeline-mcp/internal/telemetry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -45,9 +46,14 @@ func (noopGitHubClient) Rerun(context.Context, string, string, int64, bool) erro
 
 func TestRegisterExposesFiveTools(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "pipeline-mcp-test", Version: "test"}, &mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}})
+	adapter := githubapi.NewProviderAdapter(noopGitHubClient{}, "https://api.github.com")
+	registry, err := providers.NewRegistry(adapter.ProviderID(), adapter)
+	if err != nil {
+		t.Fatalf("providers.NewRegistry() error = %v", err)
+	}
 	svc := service.New(
 		&config.Config{GitHubAPIBaseURL: "https://api.github.com", DisableMutations: true, MaxLogBytes: 1024, DefaultLookbackDays: 14, MaxHistoricalRuns: 100},
-		githubapi.NewProviderAdapter(noopGitHubClient{}, "https://api.github.com"),
+		registry,
 		audit.NewJSONLStore(t.TempDir()+"/audit.jsonl", ""),
 		telemetry.NewCollector(""),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),

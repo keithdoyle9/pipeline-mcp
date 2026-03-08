@@ -10,6 +10,7 @@ import (
 	"github.com/keithdoyle9/pipeline-mcp/config"
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
 	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 	"github.com/keithdoyle9/pipeline-mcp/internal/service"
 	"github.com/keithdoyle9/pipeline-mcp/internal/telemetry"
 )
@@ -309,8 +310,18 @@ func newAcceptanceDependencies(t *testing.T, client *acceptanceGitHubClient, aud
 	}
 
 	return Dependencies{
-		Service:   service.New(cfg, githubapi.NewProviderAdapter(client, cfg.GitHubAPIBaseURL), auditStore, collector, logger),
+		Service:   service.New(cfg, mustAcceptanceRegistry(t, githubapi.NewProviderAdapter(client, cfg.GitHubAPIBaseURL)), auditStore, collector, logger),
 		Telemetry: collector,
 		Logger:    logger,
 	}
+}
+
+func mustAcceptanceRegistry(t *testing.T, adapter providers.Adapter) *providers.Registry {
+	t.Helper()
+
+	registry, err := providers.NewRegistry(adapter.ProviderID(), adapter)
+	if err != nil {
+		t.Fatalf("providers.NewRegistry() error = %v", err)
+	}
+	return registry
 }

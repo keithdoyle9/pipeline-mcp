@@ -88,15 +88,21 @@ func (m *memoryAuditStore) Append(_ context.Context, event domain.AuditEvent) er
 
 type seamTestProvider struct {
 	expectedRepository string
+	providerID         string
+	runURL             string
 	listRuns           []providers.Run
 	run                *providers.Run
 	jobs               []providers.Job
 	parsedRepository   string
+	parsedRunURL       string
 	fetchedRepository  string
 	listedRepository   string
 }
 
 func (p *seamTestProvider) ProviderID() string {
+	if strings.TrimSpace(p.providerID) != "" {
+		return p.providerID
+	}
 	return "gitlab_ci"
 }
 
@@ -108,8 +114,23 @@ func (p *seamTestProvider) ParseRepository(repository string) (string, error) {
 	return repository, nil
 }
 
-func (p *seamTestProvider) ParseRunURL(string) (*providers.RunLocator, error) {
-	return nil, errors.New("unexpected ParseRunURL call")
+func (p *seamTestProvider) ParseRunURL(raw string) (*providers.RunLocator, error) {
+	if strings.TrimSpace(p.runURL) == "" {
+		return nil, errors.New("unexpected ParseRunURL call")
+	}
+	if raw != p.runURL {
+		return nil, errors.New("unexpected run url")
+	}
+	p.parsedRunURL = raw
+	runID := int64(55)
+	if p.run != nil && p.run.ID != 0 {
+		runID = p.run.ID
+	}
+	return &providers.RunLocator{
+		Repository: p.expectedRepository,
+		RunID:      runID,
+		RunURL:     raw,
+	}, nil
 }
 
 func (p *seamTestProvider) ParseCheckRunURL(string) (int64, error) {
@@ -190,7 +211,7 @@ func TestGetRunUsesProviderNativeRepositoryAndResolvedRunURL(t *testing.T) {
 	}
 	svc := &Service{
 		cfg:       testConfig(true),
-		provider:  provider,
+		providers: mustTestRegistry(t, provider),
 		audit:     &memoryAuditStore{},
 		telemetry: telemetry.NewCollector(""),
 		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -242,7 +263,7 @@ func TestGetRunRepositoryOnlyFallsBackToResolvedRunURL(t *testing.T) {
 	}
 	svc := &Service{
 		cfg:       testConfig(true),
-		provider:  provider,
+		providers: mustTestRegistry(t, provider),
 		audit:     &memoryAuditStore{},
 		telemetry: telemetry.NewCollector(""),
 		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -261,6 +282,110 @@ func TestGetRunRepositoryOnlyFallsBackToResolvedRunURL(t *testing.T) {
 	}
 	if run.RunURL != "https://ci.example/group/subgroup/project/runs/89" {
 		t.Fatalf("expected resolved run url fallback, got %q", run.RunURL)
+	}
+}
+
+func TestGetRunUsesExplicitProviderSelection(t *testing.T) {
+	githubProvider := githubapi.NewProviderAdapter(&mockGitHubClient{
+		getRunFn: func(context.Context, string, string, int64) (*githubapi.WorkflowRun, error) {
+			t.Fatal("expected non-default provider for explicit provider selection")
+			return nil, nil
+		},
+	}, "https://api.github.com")
+
+	gitLabProvider := &seamTestProvider{
+		providerID:         "gitlab_ci",
+		expectedRepository: "group/subgroup/project",
+		run: &providers.Run{
+			ID:         55,
+			Name:       "pipeline",
+			HeadSHA:    "abc123",
+			Conclusion: "failure",
+		},
+		jobs: []providers.Job{{Name: "unit", Conclusion: "failure"}},
+	}
+
+	svc := &Service{
+		cfg:       testConfig(true),
+		providers: mustTestRegistry(t, githubProvider, gitLabProvider),
+		audit:     &memoryAuditStore{},
+		telemetry: telemetry.NewCollector(""),
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:       time.Now,
+	}
+
+	run, toolErr := svc.GetRun(context.Background(), RunReference{Provider: "gitlab_ci", Repository: "group/subgroup/project", RunID: 55})
+	if toolErr != nil {
+		t.Fatalf("unexpected tool error: %+v", toolErr)
+	}
+	if run == nil {
+		t.Fatal("expected run")
+	}
+	if run.Provider != "gitlab_ci" {
+		t.Fatalf("expected gitlab_ci provider, got %q", run.Provider)
+	}
+	if gitLabProvider.fetchedRepository != "group/subgroup/project" {
+		t.Fatalf("expected explicit provider repository lookup, got %q", gitLabProvider.fetchedRepository)
+	}
+}
+
+func TestGetRunInfersProviderFromRunURL(t *testing.T) {
+	githubProvider := githubapi.NewProviderAdapter(&mockGitHubClient{
+		getRunFn: func(context.Context, string, string, int64) (*githubapi.WorkflowRun, error) {
+			t.Fatal("expected run_url inference to avoid GitHub provider")
+			return nil, nil
+		},
+	}, "https://api.github.com")
+
+	gitLabProvider := &seamTestProvider{
+		providerID:         "gitlab_ci",
+		expectedRepository: "group/subgroup/project",
+		runURL:             "https://ci.example/group/subgroup/project/runs/77",
+		run: &providers.Run{
+			ID:         77,
+			Name:       "pipeline",
+			HeadSHA:    "abc123",
+			Conclusion: "failure",
+		},
+		jobs: []providers.Job{{Name: "unit", Conclusion: "failure"}},
+	}
+
+	svc := &Service{
+		cfg:       testConfig(true),
+		providers: mustTestRegistry(t, githubProvider, gitLabProvider),
+		audit:     &memoryAuditStore{},
+		telemetry: telemetry.NewCollector(""),
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:       time.Now,
+	}
+
+	run, toolErr := svc.GetRun(context.Background(), RunReference{RunURL: "https://ci.example/group/subgroup/project/runs/77"})
+	if toolErr != nil {
+		t.Fatalf("unexpected tool error: %+v", toolErr)
+	}
+	if run == nil {
+		t.Fatal("expected run")
+	}
+	if gitLabProvider.parsedRunURL != "https://ci.example/group/subgroup/project/runs/77" {
+		t.Fatalf("expected provider inference to parse run url, got %q", gitLabProvider.parsedRunURL)
+	}
+	if run.Provider != "gitlab_ci" {
+		t.Fatalf("expected gitlab_ci provider, got %q", run.Provider)
+	}
+}
+
+func TestAnalyzeFlakyTestsRejectsUnknownProvider(t *testing.T) {
+	svc := newTestService(&mockGitHubClient{}, true)
+
+	_, toolErr := svc.AnalyzeFlakyTests(context.Background(), "circleci", "acme/app", 14, "")
+	if toolErr == nil {
+		t.Fatal("expected tool error")
+	}
+	if toolErr.Code != domain.ErrorCodeInvalidInput {
+		t.Fatalf("expected %s, got %s", domain.ErrorCodeInvalidInput, toolErr.Code)
+	}
+	if !strings.Contains(toolErr.Message, "unsupported provider") {
+		t.Fatalf("unexpected message: %q", toolErr.Message)
 	}
 }
 
@@ -345,7 +470,7 @@ func TestAnalyzeFlakyTests(t *testing.T) {
 
 	svc := newTestService(mock, false)
 	svc.now = func() time.Time { return now }
-	report, toolErr := svc.AnalyzeFlakyTests(context.Background(), "acme/app", 14, "")
+	report, toolErr := svc.AnalyzeFlakyTests(context.Background(), "", "acme/app", 14, "")
 	if toolErr != nil {
 		t.Fatalf("unexpected error: %+v", toolErr)
 	}
@@ -371,18 +496,18 @@ func TestRerunRequiresReasonAndAudit(t *testing.T) {
 
 	svc := &Service{
 		cfg:       cfg,
-		provider:  githubapi.NewProviderAdapter(mock, cfg.GitHubAPIBaseURL),
+		providers: mustTestRegistry(t, githubapi.NewProviderAdapter(mock, cfg.GitHubAPIBaseURL)),
 		audit:     auditStore,
 		telemetry: telemetry.NewCollector(""),
 		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		now:       time.Now,
 	}
 
-	if _, err := svc.Rerun(context.Background(), "acme/app", 99, true, ""); err == nil {
+	if _, err := svc.Rerun(context.Background(), "", "acme/app", 99, true, ""); err == nil {
 		t.Fatal("expected reason validation error")
 	}
 
-	result, toolErr := svc.Rerun(context.Background(), "acme/app", 99, true, "retry flaky network failure")
+	result, toolErr := svc.Rerun(context.Background(), "", "acme/app", 99, true, "retry flaky network failure")
 	if toolErr != nil {
 		t.Fatalf("unexpected rerun error: %+v", toolErr)
 	}
@@ -418,7 +543,7 @@ func TestComparePerformance(t *testing.T) {
 	svc := newTestService(mock, false)
 	from := now.Add(-1 * time.Hour)
 	to := now
-	snapshot, toolErr := svc.ComparePerformance(context.Background(), "acme/app", "ci", from, to)
+	snapshot, toolErr := svc.ComparePerformance(context.Background(), "", "acme/app", "ci", from, to)
 	if toolErr != nil {
 		t.Fatalf("unexpected error: %+v", toolErr)
 	}
@@ -710,11 +835,32 @@ func TestDiagnoseFailureRepositoryOnlyReturnsHelpfulErrorWhenNoFailuresExist(t *
 	}
 }
 
+func mustTestRegistry(t *testing.T, adapters ...providers.Adapter) *providers.Registry {
+	t.Helper()
+
+	registry, err := buildTestRegistry(adapters...)
+	if err != nil {
+		t.Fatalf("providers.NewRegistry() error = %v", err)
+	}
+	return registry
+}
+
+func buildTestRegistry(adapters ...providers.Adapter) (*providers.Registry, error) {
+	if len(adapters) == 0 {
+		return nil, errors.New("expected at least one provider adapter")
+	}
+	return providers.NewRegistry(adapters[0].ProviderID(), adapters...)
+}
+
 func newTestService(client *mockGitHubClient, disableMutations bool) *Service {
 	cfg := testConfig(disableMutations)
+	registry, err := buildTestRegistry(githubapi.NewProviderAdapter(client, cfg.GitHubAPIBaseURL))
+	if err != nil {
+		panic(err)
+	}
 	return &Service{
 		cfg:       cfg,
-		provider:  githubapi.NewProviderAdapter(client, cfg.GitHubAPIBaseURL),
+		providers: registry,
 		audit:     &memoryAuditStore{},
 		telemetry: telemetry.NewCollector(""),
 		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),

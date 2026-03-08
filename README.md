@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/keithdoyle9/pipeline-mcp/actions/workflows/codeql.yml/badge.svg)](https://github.com/keithdoyle9/pipeline-mcp/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/github/license/keithdoyle9/pipeline-mcp)](LICENSE)
 
-`pipeline-mcp` is a Go MCP server for CI/CD diagnosis and remediation workflows, starting with GitHub Actions.
+`pipeline-mcp` is a Go MCP server for CI/CD diagnosis and remediation workflows. GitHub Actions remains the default provider, and the tool inputs now accept an optional `provider` field for provider-aware routing.
 
 ## MVP Capabilities
 
@@ -13,6 +13,7 @@
 - `pipeline.analyze_flaky_tests`: identify top flaky tests by frequency, recency, and confidence.
 - `pipeline.rerun`: trigger controlled reruns with explicit reason and audit logging.
 - `pipeline.compare_performance`: compare current window metrics against an immediately preceding baseline window.
+- All tools accept an optional `provider` input; omitting it preserves GitHub Actions as the default.
 
 ## Open Source Defaults
 
@@ -136,6 +137,7 @@ Repository-only shortcut examples:
 ```text
 Use pipeline.get_run with repository="owner/repo" to inspect the latest failed run.
 Use pipeline.diagnose_failure with repository="owner/repo" to diagnose the latest failed run.
+Add provider="github_actions" explicitly only when you need to override default routing behavior.
 ```
 
 ## GitHub Repository Protections
