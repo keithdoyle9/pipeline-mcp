@@ -19,33 +19,33 @@ type Dependencies struct {
 }
 
 type RunLocatorInput struct {
-	RunURL     string `json:"run_url,omitempty" jsonschema:"GitHub Actions run URL"`
+	RunURL     string `json:"run_url,omitempty" jsonschema:"Pipeline run URL for the active provider"`
 	RunID      int64  `json:"run_id,omitempty" jsonschema:"GitHub Actions run id"`
-	Repository string `json:"repository,omitempty" jsonschema:"Repository in owner/repo format; required when using run_id, or accepted alone to resolve the latest failed run"`
+	Repository string `json:"repository,omitempty" jsonschema:"Repository identifier accepted by the active provider; required when using run_id, or accepted alone to resolve the latest failed run"`
 }
 
 type DiagnoseFailureInput struct {
-	RunURL      string `json:"run_url,omitempty" jsonschema:"GitHub Actions run URL"`
+	RunURL      string `json:"run_url,omitempty" jsonschema:"Pipeline run URL for the active provider"`
 	RunID       int64  `json:"run_id,omitempty" jsonschema:"GitHub Actions run id"`
-	Repository  string `json:"repository,omitempty" jsonschema:"Repository in owner/repo format; required when using run_id, or accepted alone to diagnose the latest failed run"`
+	Repository  string `json:"repository,omitempty" jsonschema:"Repository identifier accepted by the active provider; required when using run_id, or accepted alone to diagnose the latest failed run"`
 	MaxLogBytes int64  `json:"max_log_bytes,omitempty" jsonschema:"Max bytes of logs to ingest for analysis"`
 }
 
 type AnalyzeFlakyTestsInput struct {
-	Repository   string `json:"repository" jsonschema:"Repository in owner/repo format"`
+	Repository   string `json:"repository" jsonschema:"Repository identifier accepted by the active provider"`
 	LookbackDays int    `json:"lookback_days,omitempty" jsonschema:"How many days of run history to inspect"`
 	Workflow     string `json:"workflow,omitempty" jsonschema:"Optional workflow name filter"`
 }
 
 type RerunInput struct {
-	Repository     string `json:"repository" jsonschema:"Repository in owner/repo format"`
+	Repository     string `json:"repository" jsonschema:"Repository identifier accepted by the active provider"`
 	RunID          int64  `json:"run_id" jsonschema:"GitHub Actions run id"`
 	FailedJobsOnly bool   `json:"failed_jobs_only" jsonschema:"If true reruns only failed jobs"`
 	Reason         string `json:"reason" jsonschema:"Reason for rerun to persist in audit log"`
 }
 
 type ComparePerformanceInput struct {
-	Repository string `json:"repository" jsonschema:"Repository in owner/repo format"`
+	Repository string `json:"repository" jsonschema:"Repository identifier accepted by the active provider"`
 	Workflow   string `json:"workflow" jsonschema:"Workflow name to compare"`
 	From       string `json:"from" jsonschema:"Current window start (RFC3339 or YYYY-MM-DD)"`
 	To         string `json:"to" jsonschema:"Current window end (RFC3339 or YYYY-MM-DD)"`

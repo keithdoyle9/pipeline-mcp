@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 )
 
 func TestAnalyzeFlakyTests(t *testing.T) {
 	now := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
-	runs := []githubapi.WorkflowRun{
+	runs := []providers.Run{
 		{ID: 1, Conclusion: "failure", UpdatedAt: now.Add(-2 * time.Hour)},
 		{ID: 2, Conclusion: "failure", UpdatedAt: now.Add(-1 * time.Hour)},
 		{ID: 3, Conclusion: "success", UpdatedAt: now.Add(-30 * time.Minute)},

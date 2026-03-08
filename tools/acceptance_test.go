@@ -309,7 +309,7 @@ func newAcceptanceDependencies(t *testing.T, client *acceptanceGitHubClient, aud
 	}
 
 	return Dependencies{
-		Service:   service.New(cfg, client, auditStore, collector, logger),
+		Service:   service.New(cfg, githubapi.NewProviderAdapter(client, cfg.GitHubAPIBaseURL), auditStore, collector, logger),
 		Telemetry: collector,
 		Logger:    logger,
 	}

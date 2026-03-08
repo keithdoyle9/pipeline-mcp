@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 )
 
 func TestDiagnoseFailureTestCategory(t *testing.T) {
 	logs := "--- FAIL: TestCheckout\nAssertionError: expected 200 got 500"
-	jobs := []githubapi.Job{{Name: "test", Conclusion: "failure"}}
+	jobs := []providers.Job{{Name: "test", Conclusion: "failure"}}
 
 	diagnostic, recommendations := DiagnoseFailure(logs, jobs)
 	if diagnostic.FailureCategory != "test_failure" {
@@ -44,7 +44,7 @@ func TestRankFailureDiagnosesOrdersCategoriesByScore(t *testing.T) {
 		"step timed out",
 	}, "\n")
 
-	ranked := RankFailureDiagnoses(logs, []githubapi.Job{{Name: "test", Conclusion: "failure"}})
+	ranked := RankFailureDiagnoses(logs, []providers.Job{{Name: "test", Conclusion: "failure"}})
 	if len(ranked) < 3 {
 		t.Fatalf("expected at least 3 ranked diagnoses, got %d", len(ranked))
 	}

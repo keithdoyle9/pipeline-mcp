@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
-	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 )
 
-func BuildPerformanceSnapshot(repository, workflow string, from, to time.Time, currentRuns, baselineRuns []githubapi.WorkflowRun) domain.PipelinePerformanceSnapshot {
+func BuildPerformanceSnapshot(repository, workflow string, from, to time.Time, currentRuns, baselineRuns []providers.Run) domain.PipelinePerformanceSnapshot {
 	current := calculateWindowMetrics(currentRuns)
 	baseline := calculateWindowMetrics(baselineRuns)
 
@@ -29,7 +29,7 @@ func BuildPerformanceSnapshot(repository, workflow string, from, to time.Time, c
 	}
 }
 
-func calculateWindowMetrics(runs []githubapi.WorkflowRun) domain.WindowMetrics {
+func calculateWindowMetrics(runs []providers.Run) domain.WindowMetrics {
 	if len(runs) == 0 {
 		return domain.WindowMetrics{FailureBreakdown: map[string]int{}}
 	}
@@ -83,7 +83,7 @@ func calculateWindowMetrics(runs []githubapi.WorkflowRun) domain.WindowMetrics {
 	}
 }
 
-func runDurationMS(run githubapi.WorkflowRun) int64 {
+func runDurationMS(run providers.Run) int64 {
 	end := run.UpdatedAt
 	start := run.CreatedAt
 	if run.RunStartedAt != nil && !run.RunStartedAt.IsZero() {
@@ -95,7 +95,7 @@ func runDurationMS(run githubapi.WorkflowRun) int64 {
 	return end.Sub(start).Milliseconds()
 }
 
-func queueTimeMS(run githubapi.WorkflowRun) int64 {
+func queueTimeMS(run providers.Run) int64 {
 	if run.RunStartedAt == nil || run.RunStartedAt.IsZero() {
 		return 0
 	}
@@ -105,7 +105,7 @@ func queueTimeMS(run githubapi.WorkflowRun) int64 {
 	return run.RunStartedAt.Sub(run.CreatedAt).Milliseconds()
 }
 
-func classifyRunFailure(run githubapi.WorkflowRun) string {
+func classifyRunFailure(run providers.Run) string {
 	conclusion := strings.ToLower(strings.TrimSpace(run.Conclusion))
 	switch conclusion {
 	case "timed_out", "cancelled":

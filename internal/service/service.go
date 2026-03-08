@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -13,34 +12,23 @@ import (
 	"github.com/keithdoyle9/pipeline-mcp/internal/analysis"
 	"github.com/keithdoyle9/pipeline-mcp/internal/audit"
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
-	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 	"github.com/keithdoyle9/pipeline-mcp/internal/telemetry"
 )
 
-type GitHubClient interface {
-	GetRun(ctx context.Context, owner, repo string, runID int64) (*githubapi.WorkflowRun, error)
-	ListRunJobs(ctx context.Context, owner, repo string, runID int64) ([]githubapi.Job, error)
-	DownloadRunLogs(ctx context.Context, owner, repo string, runID int64, maxBytes int64) (string, error)
-	ListRepositoryRuns(ctx context.Context, owner, repo string, opts githubapi.ListRunsOptions, maxRuns int) ([]githubapi.WorkflowRun, error)
-	GetCheckRun(ctx context.Context, owner, repo string, checkRunID int64) (*githubapi.CheckRun, error)
-	GetCheckRunAnnotations(ctx context.Context, owner, repo string, checkRunID int64) ([]githubapi.CheckRunAnnotation, error)
-	ListDeploymentBranchPolicies(ctx context.Context, owner, repo, environment string) ([]githubapi.BranchPolicy, error)
-	Rerun(ctx context.Context, owner, repo string, runID int64, failedJobsOnly bool) error
-}
-
 type Service struct {
 	cfg       *config.Config
-	github    GitHubClient
+	provider  providers.Adapter
 	audit     audit.Store
 	telemetry *telemetry.Collector
 	logger    *slog.Logger
 	now       func() time.Time
 }
 
-func New(cfg *config.Config, github GitHubClient, auditStore audit.Store, collector *telemetry.Collector, logger *slog.Logger) *Service {
+func New(cfg *config.Config, provider providers.Adapter, auditStore audit.Store, collector *telemetry.Collector, logger *slog.Logger) *Service {
 	return &Service{
 		cfg:       cfg,
-		github:    github,
+		provider:  provider,
 		audit:     auditStore,
 		telemetry: collector,
 		logger:    logger,
@@ -60,17 +48,17 @@ func (s *Service) GetRun(ctx context.Context, input RunReference) (*domain.Pipel
 		return nil, toolErr
 	}
 
-	run, err := s.github.GetRun(ctx, resolved.Owner, resolved.Repo, resolved.RunID)
+	run, err := s.provider.GetRun(ctx, resolved.Repository, resolved.RunID)
 	if err != nil {
-		return nil, mapProviderErr(err)
+		return nil, s.provider.MapError(err)
 	}
 
-	jobs, err := s.github.ListRunJobs(ctx, resolved.Owner, resolved.Repo, resolved.RunID)
+	jobs, err := s.provider.ListRunJobs(ctx, resolved.Repository, resolved.RunID)
 	if err != nil {
-		s.logger.Warn("failed to fetch jobs for run", "repository", resolved.Repository(), "run_id", resolved.RunID, "error", err)
+		s.logger.Warn("failed to fetch jobs for run", "repository", resolved.Repository, "run_id", resolved.RunID, "error", err)
 	}
 
-	pipelineRun := normalizeRun(run, resolved.Repository(), jobs)
+	pipelineRun := normalizeRun(s.provider.ProviderID(), run, resolved.Repository, resolved.RunURL, jobs)
 	return &pipelineRun, nil
 }
 
@@ -87,30 +75,30 @@ func (s *Service) DiagnoseFailure(ctx context.Context, input RunReference, maxLo
 		maxLogBytes = s.cfg.MaxLogBytes
 	}
 
-	run, err := s.github.GetRun(ctx, resolved.Owner, resolved.Repo, resolved.RunID)
+	run, err := s.provider.GetRun(ctx, resolved.Repository, resolved.RunID)
 	if err != nil {
-		return nil, nil, mapProviderErr(err)
+		return nil, nil, s.provider.MapError(err)
 	}
-	jobs, err := s.github.ListRunJobs(ctx, resolved.Owner, resolved.Repo, resolved.RunID)
+	jobs, err := s.provider.ListRunJobs(ctx, resolved.Repository, resolved.RunID)
 	if err != nil {
-		return nil, nil, mapProviderErr(err)
+		return nil, nil, s.provider.MapError(err)
 	}
-	if diagnostic, recommendations, ok := s.diagnoseMetadataFailure(ctx, resolved.Owner, resolved.Repo, jobs); ok {
+	if diagnostic, recommendations, ok := s.diagnoseMetadataFailure(ctx, resolved.Repository, jobs); ok {
 		return diagnostic, recommendations, nil
 	}
 
-	logs, err := s.github.DownloadRunLogs(ctx, resolved.Owner, resolved.Repo, resolved.RunID, maxLogBytes)
+	logs, err := s.provider.DownloadRunLogs(ctx, resolved.Repository, resolved.RunID, maxLogBytes)
 	if err != nil {
-		if errors.Is(err, githubapi.ErrLogsUnavailable) {
+		if s.provider.IsLogsUnavailable(err) {
 			return nil, nil, domain.NewToolError(
 				domain.ErrorCodeLogUnavailable,
 				"Workflow logs are unavailable for this run.",
 				"Confirm the run still exists and your token has actions:read access, then retry.",
 				true,
-				map[string]any{"repository": resolved.Repository(), "run_id": resolved.RunID},
+				map[string]any{"repository": resolved.Repository, "run_id": resolved.RunID},
 			)
 		}
-		return nil, nil, mapProviderErr(err)
+		return nil, nil, s.provider.MapError(err)
 	}
 
 	redacted := analysis.RedactSecrets(logs)
@@ -124,7 +112,7 @@ func (s *Service) DiagnoseFailure(ctx context.Context, input RunReference, maxLo
 var envProtectionPattern = regexp.MustCompile(`Branch "([^"]+)" is not allowed to deploy to ([^ ]+) due to environment protection rules\.`)
 var approvalRequiredPattern = regexp.MustCompile(`(?i)(review required|required reviewers|approved review|approval.+required|not approved by required reviewers|awaiting review)`)
 
-func (s *Service) diagnoseMetadataFailure(ctx context.Context, owner, repo string, jobs []githubapi.Job) (*domain.FailureDiagnostic, []domain.FixRecommendation, bool) {
+func (s *Service) diagnoseMetadataFailure(ctx context.Context, repository string, jobs []providers.Job) (*domain.FailureDiagnostic, []domain.FixRecommendation, bool) {
 	for _, job := range jobs {
 		if !strings.EqualFold(job.Conclusion, "failure") {
 			continue
@@ -133,11 +121,11 @@ func (s *Service) diagnoseMetadataFailure(ctx context.Context, owner, repo strin
 			continue
 		}
 
-		checkRunID, err := githubapi.ParseCheckRunURLForBase(job.CheckRunURL, s.cfg.GitHubAPIBaseURL)
+		checkRunID, err := s.provider.ParseCheckRunURL(job.CheckRunURL)
 		if err != nil {
 			continue
 		}
-		annotations, err := s.github.GetCheckRunAnnotations(ctx, owner, repo, checkRunID)
+		annotations, err := s.provider.GetCheckRunAnnotations(ctx, repository, checkRunID)
 		if err != nil || len(annotations) == 0 {
 			continue
 		}
@@ -164,7 +152,7 @@ func (s *Service) diagnoseMetadataFailure(ctx context.Context, owner, repo strin
 			continue
 		}
 
-		checkRun, err := s.github.GetCheckRun(ctx, owner, repo, checkRunID)
+		checkRun, err := s.provider.GetCheckRun(ctx, repository, checkRunID)
 		if err == nil && checkRun != nil && checkRun.Deployment != nil {
 			if environment == "" {
 				environment = firstNonEmpty(checkRun.Deployment.OriginalEnvironment, checkRun.Deployment.Environment)
@@ -192,9 +180,9 @@ func (s *Service) diagnoseMetadataFailure(ctx context.Context, owner, repo strin
 			continue
 		}
 
-		var policies []githubapi.BranchPolicy
+		var policies []providers.BranchPolicy
 		if environment != "the target environment" {
-			policies, err = s.github.ListDeploymentBranchPolicies(ctx, owner, repo, environment)
+			policies, err = s.provider.ListDeploymentBranchPolicies(ctx, repository, environment)
 			if err != nil {
 				policies = nil
 			}
@@ -226,9 +214,9 @@ func (s *Service) diagnoseMetadataFailure(ctx context.Context, owner, repo strin
 }
 
 func (s *Service) AnalyzeFlakyTests(ctx context.Context, repository string, lookbackDays int, workflow string) (*domain.FlakyTestReport, *domain.ToolError) {
-	owner, repo, err := githubapi.ParseRepository(repository)
+	repository, err := s.provider.ParseRepository(repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide repository in owner/repo format.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier for the active provider.", false, nil)
 	}
 	if lookbackDays <= 0 {
 		lookbackDays = s.cfg.DefaultLookbackDays
@@ -240,14 +228,14 @@ func (s *Service) AnalyzeFlakyTests(ctx context.Context, repository string, look
 	end := s.now().UTC()
 	start := end.AddDate(0, 0, -lookbackDays)
 	created := fmt.Sprintf("%s..%s", start.Format(time.RFC3339), end.Format(time.RFC3339))
-	runs, err := s.github.ListRepositoryRuns(ctx, owner, repo, githubapi.ListRunsOptions{Created: created}, s.cfg.MaxHistoricalRuns)
+	runs, err := s.provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{Created: created}, s.cfg.MaxHistoricalRuns)
 	if err != nil {
-		return nil, mapProviderErr(err)
+		return nil, s.provider.MapError(err)
 	}
 	runs = filterByWorkflow(runs, workflow)
 
 	report := analysis.AnalyzeFlakyTests(repository, workflow, lookbackDays, runs, func(runID int64) (string, error) {
-		return s.github.DownloadRunLogs(ctx, owner, repo, runID, s.cfg.MaxLogBytes/2)
+		return s.provider.DownloadRunLogs(ctx, repository, runID, s.cfg.MaxLogBytes/2)
 	}, end)
 	return &report, nil
 }
@@ -256,9 +244,9 @@ func (s *Service) Rerun(ctx context.Context, repository string, runID int64, fai
 	if strings.TrimSpace(reason) == "" {
 		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "reason is required", "Provide a short reason for auditability.", false, nil)
 	}
-	owner, repo, err := githubapi.ParseRepository(repository)
+	repository, err := s.provider.ParseRepository(repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide repository in owner/repo format.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier for the active provider.", false, nil)
 	}
 	if runID <= 0 {
 		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "run_id must be greater than zero", "Pass a valid GitHub Actions run id.", false, nil)
@@ -287,11 +275,11 @@ func (s *Service) Rerun(ctx context.Context, repository string, runID int64, fai
 		Actor:       s.cfg.Actor,
 	}
 
-	err = s.github.Rerun(ctx, owner, repo, runID, failedJobsOnly)
+	err = s.provider.Rerun(ctx, repository, runID, failedJobsOnly)
 	outcome := "success"
 	if err != nil {
 		outcome = "failed"
-		mapped := mapProviderErr(err)
+		mapped := s.provider.MapError(err)
 		_ = s.emitAudit(ctx, repository, runID, reason, scope, outcome)
 		return nil, mapped
 	}
@@ -304,9 +292,9 @@ func (s *Service) Rerun(ctx context.Context, repository string, runID int64, fai
 }
 
 func (s *Service) ComparePerformance(ctx context.Context, repository, workflow string, from, to time.Time) (*domain.PipelinePerformanceSnapshot, *domain.ToolError) {
-	owner, repo, err := githubapi.ParseRepository(repository)
+	repository, err := s.provider.ParseRepository(repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide repository in owner/repo format.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier for the active provider.", false, nil)
 	}
 	if to.Before(from) || to.Equal(from) {
 		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "to must be after from", "Provide a time range where to > from.", false, nil)
@@ -319,13 +307,13 @@ func (s *Service) ComparePerformance(ctx context.Context, repository, workflow s
 	currentRange := fmt.Sprintf("%s..%s", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
 	baselineRange := fmt.Sprintf("%s..%s", baselineFrom.UTC().Format(time.RFC3339), baselineTo.UTC().Format(time.RFC3339))
 
-	currentRuns, err := s.github.ListRepositoryRuns(ctx, owner, repo, githubapi.ListRunsOptions{Created: currentRange}, s.cfg.MaxHistoricalRuns)
+	currentRuns, err := s.provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{Created: currentRange}, s.cfg.MaxHistoricalRuns)
 	if err != nil {
-		return nil, mapProviderErr(err)
+		return nil, s.provider.MapError(err)
 	}
-	baselineRuns, err := s.github.ListRepositoryRuns(ctx, owner, repo, githubapi.ListRunsOptions{Created: baselineRange}, s.cfg.MaxHistoricalRuns)
+	baselineRuns, err := s.provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{Created: baselineRange}, s.cfg.MaxHistoricalRuns)
 	if err != nil {
-		return nil, mapProviderErr(err)
+		return nil, s.provider.MapError(err)
 	}
 	currentRuns = filterByWorkflow(currentRuns, workflow)
 	baselineRuns = filterByWorkflow(baselineRuns, workflow)
@@ -349,11 +337,11 @@ func (s *Service) emitAudit(ctx context.Context, repository string, runID int64,
 	return s.audit.Append(ctx, event)
 }
 
-func (s *Service) resolveRunReference(ctx context.Context, ref RunReference, allowRepositoryOnly bool) (*githubapi.RunLocator, *domain.ToolError) {
+func (s *Service) resolveRunReference(ctx context.Context, ref RunReference, allowRepositoryOnly bool) (*providers.RunLocator, *domain.ToolError) {
 	if strings.TrimSpace(ref.RunURL) != "" {
-		locator, err := githubapi.ParseRunURL(ref.RunURL)
+		locator, err := s.provider.ParseRunURL(ref.RunURL)
 		if err != nil {
-			return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid GitHub Actions run URL.", false, nil)
+			return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid pipeline run URL for the active provider.", false, nil)
 		}
 		return locator, nil
 	}
@@ -363,22 +351,22 @@ func (s *Service) resolveRunReference(ctx context.Context, ref RunReference, all
 		}
 		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, "either run_url or run_id must be provided", "Provide a run_url, or both run_id and repository, or repository alone to use the latest failed run.", false, nil)
 	}
-	owner, repo, err := githubapi.ParseRepository(ref.Repository)
+	repository, err := s.provider.ParseRepository(ref.Repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide repository in owner/repo format when using run_id.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier when using run_id.", false, nil)
 	}
-	return &githubapi.RunLocator{Owner: owner, Repo: repo, RunID: ref.RunID, RunURL: fmt.Sprintf("https://github.com/%s/%s/actions/runs/%d", owner, repo, ref.RunID)}, nil
+	return &providers.RunLocator{Repository: repository, RunID: ref.RunID, RunURL: s.provider.RunURL(repository, ref.RunID)}, nil
 }
 
-func (s *Service) resolveLatestFailedRun(ctx context.Context, repository string) (*githubapi.RunLocator, *domain.ToolError) {
-	owner, repo, err := githubapi.ParseRepository(repository)
+func (s *Service) resolveLatestFailedRun(ctx context.Context, repository string) (*providers.RunLocator, *domain.ToolError) {
+	repository, err := s.provider.ParseRepository(repository)
 	if err != nil {
-		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide repository in owner/repo format.", false, nil)
+		return nil, domain.NewToolError(domain.ErrorCodeInvalidInput, err.Error(), "Provide a valid repository identifier for the active provider.", false, nil)
 	}
 
-	runs, err := s.github.ListRepositoryRuns(ctx, owner, repo, githubapi.ListRunsOptions{PerPage: 1, Status: "failure"}, 1)
+	runs, err := s.provider.ListRepositoryRuns(ctx, repository, providers.ListRunsOptions{PerPage: 1, Status: "failure"}, 1)
 	if err != nil {
-		return nil, mapProviderErr(err)
+		return nil, s.provider.MapError(err)
 	}
 	if len(runs) == 0 {
 		return nil, domain.NewToolError(
@@ -391,48 +379,19 @@ func (s *Service) resolveLatestFailedRun(ctx context.Context, repository string)
 	}
 
 	run := runs[0]
-	runURL := strings.TrimSpace(run.HTMLURL)
+	runURL := strings.TrimSpace(run.RunURL)
 	if runURL == "" {
-		runURL = fmt.Sprintf("https://github.com/%s/%s/actions/runs/%d", owner, repo, run.ID)
+		runURL = s.provider.RunURL(repository, run.ID)
 	}
 
-	return &githubapi.RunLocator{
-		Owner:  owner,
-		Repo:   repo,
-		RunID:  run.ID,
-		RunURL: runURL,
+	return &providers.RunLocator{
+		Repository: repository,
+		RunID:      run.ID,
+		RunURL:     runURL,
 	}, nil
 }
 
-func mapProviderErr(err error) *domain.ToolError {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, githubapi.ErrUnauthorized) || errors.Is(err, githubapi.ErrWriteTokenRequired) {
-		return domain.NewToolError(domain.ErrorCodeUnauthorized, "GitHub API authorization failed.", "Verify token scopes: actions:read for read tools and actions:write for rerun.", false, map[string]any{"error": err.Error()})
-	}
-	if errors.Is(err, githubapi.ErrNotFound) {
-		return domain.NewToolError(
-			domain.ErrorCodeUnauthorized,
-			"Run not found or access denied.",
-			"Confirm the run URL is correct and provide a token that can read this repository. For Claude Code, add the server with -e GITHUB_READ_TOKEN=... or -e GITHUB_TOKEN=....",
-			false,
-			map[string]any{"error": err.Error()},
-		)
-	}
-	if errors.Is(err, githubapi.ErrRateLimited) {
-		return domain.NewToolError(domain.ErrorCodeRateLimited, "GitHub API rate limit exceeded.", "Retry after backoff or increase API quota/token capacity.", true, map[string]any{"error": err.Error()})
-	}
-	if errors.Is(err, githubapi.ErrLogsUnavailable) {
-		return domain.NewToolError(domain.ErrorCodeLogUnavailable, "Run logs are unavailable.", "Check repository permissions and log retention settings.", true, map[string]any{"error": err.Error()})
-	}
-	if errors.Is(err, githubapi.ErrProviderUnavailable) {
-		return domain.NewToolError(domain.ErrorCodeProviderUnavailable, "GitHub API is unavailable.", "Retry with exponential backoff and check provider status.", true, map[string]any{"error": err.Error()})
-	}
-	return domain.NewToolError(domain.ErrorCodeInternal, "Unexpected internal error.", "Check server logs and retry.", true, map[string]any{"error": err.Error()})
-}
-
-func normalizeRun(run *githubapi.WorkflowRun, repository string, jobs []githubapi.Job) domain.PipelineRun {
+func normalizeRun(providerID string, run *providers.Run, repository, resolvedRunURL string, jobs []providers.Job) domain.PipelineRun {
 	workflow := run.Name
 	if strings.TrimSpace(workflow) == "" {
 		workflow = run.DisplayTitle
@@ -458,6 +417,10 @@ func normalizeRun(run *githubapi.WorkflowRun, repository string, jobs []githubap
 	if strings.TrimSpace(run.Conclusion) != "" {
 		status = run.Conclusion
 	}
+	runURL := strings.TrimSpace(run.RunURL)
+	if runURL == "" {
+		runURL = strings.TrimSpace(resolvedRunURL)
+	}
 
 	failureReason := ""
 	for _, job := range jobs {
@@ -468,7 +431,7 @@ func normalizeRun(run *githubapi.WorkflowRun, repository string, jobs []githubap
 	}
 
 	return domain.PipelineRun{
-		Provider:      domain.ProviderGitHub,
+		Provider:      providerID,
 		Repository:    repository,
 		Workflow:      workflow,
 		Status:        status,
@@ -476,7 +439,7 @@ func normalizeRun(run *githubapi.WorkflowRun, repository string, jobs []githubap
 		CompletedAt:   completedAt,
 		DurationMS:    durationMS,
 		QueueTimeMS:   queueTimeMS,
-		RunURL:        run.HTMLURL,
+		RunURL:        runURL,
 		CommitSHA:     run.HeadSHA,
 		RunID:         run.ID,
 		Conclusion:    run.Conclusion,
@@ -484,12 +447,12 @@ func normalizeRun(run *githubapi.WorkflowRun, repository string, jobs []githubap
 	}
 }
 
-func filterByWorkflow(runs []githubapi.WorkflowRun, workflow string) []githubapi.WorkflowRun {
+func filterByWorkflow(runs []providers.Run, workflow string) []providers.Run {
 	workflow = strings.TrimSpace(workflow)
 	if workflow == "" {
 		return runs
 	}
-	filtered := make([]githubapi.WorkflowRun, 0, len(runs))
+	filtered := make([]providers.Run, 0, len(runs))
 	for _, run := range runs {
 		if strings.EqualFold(run.Name, workflow) || strings.EqualFold(run.DisplayTitle, workflow) {
 			filtered = append(filtered, run)

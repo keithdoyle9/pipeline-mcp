@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
-	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 )
 
 type categoryRule struct {
@@ -99,12 +99,12 @@ var diagnosisRules = []categoryRule{
 	},
 }
 
-func RankFailureDiagnoses(logs string, jobs []githubapi.Job) []RankedDiagnosis {
+func RankFailureDiagnoses(logs string, jobs []providers.Job) []RankedDiagnosis {
 	ranked, _ := rankFailureDiagnoses(logs, jobs)
 	return ranked
 }
 
-func rankFailureDiagnoses(logs string, jobs []githubapi.Job) ([]RankedDiagnosis, []string) {
+func rankFailureDiagnoses(logs string, jobs []providers.Job) ([]RankedDiagnosis, []string) {
 	logs = RedactSecrets(logs)
 	impactedJobs := failedJobs(jobs)
 
@@ -156,7 +156,7 @@ func rankFailureDiagnoses(logs string, jobs []githubapi.Job) ([]RankedDiagnosis,
 	return ranked, impactedJobs
 }
 
-func DiagnoseFailure(logs string, jobs []githubapi.Job) (domain.FailureDiagnostic, []domain.FixRecommendation) {
+func DiagnoseFailure(logs string, jobs []providers.Job) (domain.FailureDiagnostic, []domain.FixRecommendation) {
 	ranked, impactedJobs := rankFailureDiagnoses(logs, jobs)
 	if len(ranked) == 0 {
 		ranked = []RankedDiagnosis{unknownRankedDiagnosis(RedactSecrets(logs), impactedJobs)}
@@ -172,7 +172,7 @@ func DiagnoseFailure(logs string, jobs []githubapi.Job) (domain.FailureDiagnosti
 	}, best.Recommendations
 }
 
-func failedJobs(jobs []githubapi.Job) []string {
+func failedJobs(jobs []providers.Job) []string {
 	out := make([]string, 0, len(jobs))
 	for _, job := range jobs {
 		if strings.EqualFold(job.Conclusion, "failure") || strings.EqualFold(job.Status, "failed") {
