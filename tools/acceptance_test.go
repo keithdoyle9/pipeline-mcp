@@ -10,6 +10,7 @@ import (
 	"github.com/keithdoyle9/pipeline-mcp/config"
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
 	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/gitlabapi"
 	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 	"github.com/keithdoyle9/pipeline-mcp/internal/service"
 	"github.com/keithdoyle9/pipeline-mcp/internal/telemetry"
@@ -80,6 +81,49 @@ func (m *acceptanceGitHubClient) Rerun(ctx context.Context, owner, repo string, 
 		return nil
 	}
 	return m.rerunFn(ctx, owner, repo, runID, failedJobsOnly)
+}
+
+type acceptanceGitLabClient struct {
+	getPipelineFn      func(ctx context.Context, projectPath string, pipelineID int64) (*gitlabapi.Pipeline, error)
+	listPipelineJobsFn func(ctx context.Context, projectPath string, pipelineID int64) ([]gitlabapi.Job, error)
+	downloadJobTraceFn func(ctx context.Context, projectPath string, jobID int64, maxBytes int64) (string, error)
+	listPipelinesFn    func(ctx context.Context, projectPath string, opts gitlabapi.ListPipelinesOptions, maxRuns int) ([]gitlabapi.Pipeline, error)
+	retryPipelineFn    func(ctx context.Context, projectPath string, pipelineID int64) error
+}
+
+func (m *acceptanceGitLabClient) GetPipeline(ctx context.Context, projectPath string, pipelineID int64) (*gitlabapi.Pipeline, error) {
+	if m.getPipelineFn == nil {
+		return nil, nil
+	}
+	return m.getPipelineFn(ctx, projectPath, pipelineID)
+}
+
+func (m *acceptanceGitLabClient) ListPipelineJobs(ctx context.Context, projectPath string, pipelineID int64) ([]gitlabapi.Job, error) {
+	if m.listPipelineJobsFn == nil {
+		return nil, nil
+	}
+	return m.listPipelineJobsFn(ctx, projectPath, pipelineID)
+}
+
+func (m *acceptanceGitLabClient) DownloadJobTrace(ctx context.Context, projectPath string, jobID int64, maxBytes int64) (string, error) {
+	if m.downloadJobTraceFn == nil {
+		return "", nil
+	}
+	return m.downloadJobTraceFn(ctx, projectPath, jobID, maxBytes)
+}
+
+func (m *acceptanceGitLabClient) ListProjectPipelines(ctx context.Context, projectPath string, opts gitlabapi.ListPipelinesOptions, maxRuns int) ([]gitlabapi.Pipeline, error) {
+	if m.listPipelinesFn == nil {
+		return nil, nil
+	}
+	return m.listPipelinesFn(ctx, projectPath, opts, maxRuns)
+}
+
+func (m *acceptanceGitLabClient) RetryPipeline(ctx context.Context, projectPath string, pipelineID int64) error {
+	if m.retryPipelineFn == nil {
+		return nil
+	}
+	return m.retryPipelineFn(ctx, projectPath, pipelineID)
 }
 
 type acceptanceAuditStore struct {
@@ -293,7 +337,229 @@ func TestAcceptanceAC5ComparePerformanceReturnsBaselineCurrentAndFailureBreakdow
 	}
 }
 
+func TestAcceptanceGitLabAC1DiagnoseFailureReturnsDiagnosticAndRecommendations(t *testing.T) {
+	deps := newAcceptanceDependenciesWithAdapters(
+		t,
+		[]providers.Adapter{
+			githubapi.NewProviderAdapter(&acceptanceGitHubClient{}, "https://api.github.com"),
+			gitlabapi.NewProviderAdapter(&acceptanceGitLabClient{
+				getPipelineFn: func(context.Context, string, int64) (*gitlabapi.Pipeline, error) {
+					return &gitlabapi.Pipeline{ID: 55, Name: "ci", WebURL: "https://gitlab.example.com/group/app/-/pipelines/55"}, nil
+				},
+				listPipelineJobsFn: func(context.Context, string, int64) ([]gitlabapi.Job, error) {
+					return []gitlabapi.Job{{ID: 4, Name: "test", Status: "failed"}}, nil
+				},
+				downloadJobTraceFn: func(context.Context, string, int64, int64) (string, error) {
+					return "--- FAIL: TestCheckout\nAssertionError: expected 200 got 500", nil
+				},
+			}, "https://gitlab.example.com/api/v4"),
+		},
+		&acceptanceAuditStore{},
+		true,
+	)
+
+	_, out, err := deps.diagnoseFailure(context.Background(), nil, DiagnoseFailureInput{
+		Provider:   "gitlab_ci",
+		Repository: "group/app",
+		RunID:      55,
+	})
+	if err != nil {
+		t.Fatalf("diagnoseFailure() error = %v", err)
+	}
+	if out.Error != nil {
+		t.Fatalf("unexpected tool error: %+v", out.Error)
+	}
+	if out.Diagnostic == nil || out.Diagnostic.FailureCategory == "" || len(out.Recommendations) == 0 {
+		t.Fatalf("expected diagnostic output, got %+v %+v", out.Diagnostic, out.Recommendations)
+	}
+}
+
+func TestAcceptanceGitLabAC2DiagnoseFailureMapsLogUnavailable(t *testing.T) {
+	deps := newAcceptanceDependenciesWithAdapters(
+		t,
+		[]providers.Adapter{
+			githubapi.NewProviderAdapter(&acceptanceGitHubClient{}, "https://api.github.com"),
+			gitlabapi.NewProviderAdapter(&acceptanceGitLabClient{
+				getPipelineFn: func(context.Context, string, int64) (*gitlabapi.Pipeline, error) {
+					return &gitlabapi.Pipeline{ID: 55, Name: "ci", WebURL: "https://gitlab.example.com/group/app/-/pipelines/55"}, nil
+				},
+				listPipelineJobsFn: func(context.Context, string, int64) ([]gitlabapi.Job, error) {
+					return []gitlabapi.Job{{ID: 4, Name: "test", Status: "failed"}}, nil
+				},
+				downloadJobTraceFn: func(context.Context, string, int64, int64) (string, error) {
+					return "", gitlabapi.ErrLogsUnavailable
+				},
+			}, "https://gitlab.example.com/api/v4"),
+		},
+		&acceptanceAuditStore{},
+		true,
+	)
+
+	_, out, err := deps.diagnoseFailure(context.Background(), nil, DiagnoseFailureInput{
+		Provider:   "gitlab_ci",
+		Repository: "group/app",
+		RunID:      55,
+	})
+	if err != nil {
+		t.Fatalf("diagnoseFailure() error = %v", err)
+	}
+	if out.Error == nil || out.Error.Code != domain.ErrorCodeLogUnavailable {
+		t.Fatalf("expected LOG_UNAVAILABLE, got %+v", out.Error)
+	}
+}
+
+func TestAcceptanceGitLabAC3AnalyzeFlakyTestsReturnsFrequencyRecencyConfidence(t *testing.T) {
+	now := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
+	deps := newAcceptanceDependenciesWithAdapters(
+		t,
+		[]providers.Adapter{
+			githubapi.NewProviderAdapter(&acceptanceGitHubClient{}, "https://api.github.com"),
+			gitlabapi.NewProviderAdapter(&acceptanceGitLabClient{
+				listPipelinesFn: func(context.Context, string, gitlabapi.ListPipelinesOptions, int) ([]gitlabapi.Pipeline, error) {
+					return []gitlabapi.Pipeline{
+						{ID: 1, Name: "ci", Status: "failed", UpdatedAt: now.Add(-2 * time.Hour)},
+						{ID: 2, Name: "ci", Status: "failed", UpdatedAt: now.Add(-1 * time.Hour)},
+						{ID: 3, Name: "ci", Status: "success", UpdatedAt: now.Add(-30 * time.Minute)},
+					}, nil
+				},
+				listPipelineJobsFn: func(context.Context, string, int64) ([]gitlabapi.Job, error) {
+					return []gitlabapi.Job{{ID: 5, Name: "test", Status: "failed"}}, nil
+				},
+				downloadJobTraceFn: func(_ context.Context, _ string, jobID int64, _ int64) (string, error) {
+					if jobID == 5 {
+						return "--- FAIL: TestCheckout", nil
+					}
+					return "", nil
+				},
+			}, "https://gitlab.example.com/api/v4"),
+		},
+		&acceptanceAuditStore{},
+		true,
+	)
+
+	_, out, err := deps.analyzeFlakyTests(context.Background(), nil, AnalyzeFlakyTestsInput{
+		Provider:     "gitlab_ci",
+		Repository:   "group/app",
+		LookbackDays: 14,
+	})
+	if err != nil {
+		t.Fatalf("analyzeFlakyTests() error = %v", err)
+	}
+	if out.Error != nil {
+		t.Fatalf("unexpected tool error: %+v", out.Error)
+	}
+	if out.Report == nil || len(out.Report.TopFlaky) == 0 {
+		t.Fatalf("expected flaky report, got %+v", out.Report)
+	}
+}
+
+func TestAcceptanceGitLabAC4RerunSupportsFailedJobsOnlyAndRejectsFullRun(t *testing.T) {
+	auditStore := &acceptanceAuditStore{}
+	deps := newAcceptanceDependenciesWithAdapters(
+		t,
+		[]providers.Adapter{
+			githubapi.NewProviderAdapter(&acceptanceGitHubClient{}, "https://api.github.com"),
+			gitlabapi.NewProviderAdapter(&acceptanceGitLabClient{
+				retryPipelineFn: func(context.Context, string, int64) error { return nil },
+			}, "https://gitlab.example.com/api/v4"),
+		},
+		auditStore,
+		false,
+	)
+
+	_, invalid, err := deps.rerun(context.Background(), nil, RerunInput{
+		Provider:       "gitlab_ci",
+		Repository:     "group/app",
+		RunID:          99,
+		FailedJobsOnly: false,
+		Reason:         "retry all jobs",
+	})
+	if err != nil {
+		t.Fatalf("rerun() validation error = %v", err)
+	}
+	if invalid.Error == nil || invalid.Error.Code != domain.ErrorCodeInvalidInput {
+		t.Fatalf("expected INVALID_INPUT, got %+v", invalid.Error)
+	}
+
+	_, out, err := deps.rerun(context.Background(), nil, RerunInput{
+		Provider:       "gitlab_ci",
+		Repository:     "group/app",
+		RunID:          99,
+		FailedJobsOnly: true,
+		Reason:         "retry failed jobs",
+	})
+	if err != nil {
+		t.Fatalf("rerun() error = %v", err)
+	}
+	if out.Error != nil {
+		t.Fatalf("unexpected tool error: %+v", out.Error)
+	}
+	if out.Result == nil || out.Result.Scope != "failed_jobs_only" {
+		t.Fatalf("expected rerun scope failed_jobs_only, got %+v", out.Result)
+	}
+	if len(auditStore.events) != 2 {
+		t.Fatalf("expected 2 audit events, got %d", len(auditStore.events))
+	}
+}
+
+func TestAcceptanceGitLabAC5ComparePerformanceReturnsBaselineCurrentAndFailureBreakdown(t *testing.T) {
+	from := time.Date(2026, 3, 6, 11, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
+	deps := newAcceptanceDependenciesWithAdapters(
+		t,
+		[]providers.Adapter{
+			githubapi.NewProviderAdapter(&acceptanceGitHubClient{}, "https://api.github.com"),
+			gitlabapi.NewProviderAdapter(&acceptanceGitLabClient{
+				listPipelinesFn: func(_ context.Context, _ string, opts gitlabapi.ListPipelinesOptions, _ int) ([]gitlabapi.Pipeline, error) {
+					switch {
+					case opts.CreatedAfter == "2026-03-06T11:00:00Z" && opts.CreatedBefore == "2026-03-06T12:00:00Z":
+						currentStart := from.Add(5 * time.Minute)
+						currentEnd := to.Add(-10 * time.Minute)
+						failedStart := from.Add(10 * time.Minute)
+						failedEnd := to.Add(-5 * time.Minute)
+						return []gitlabapi.Pipeline{
+							{ID: 2, Name: "ci", Status: "success", CreatedAt: from, StartedAt: &currentStart, FinishedAt: &currentEnd, UpdatedAt: currentEnd, SHA: "sha-2"},
+							{ID: 3, Name: "ci", Status: "failed", CreatedAt: from.Add(2 * time.Minute), StartedAt: &failedStart, FinishedAt: &failedEnd, UpdatedAt: failedEnd, SHA: "sha-3"},
+						}, nil
+					case opts.CreatedAfter == "2026-03-06T10:00:00Z" && opts.CreatedBefore == "2026-03-06T11:00:00Z":
+						baselineStart := from.Add(-55 * time.Minute)
+						baselineEnd := from.Add(-15 * time.Minute)
+						return []gitlabapi.Pipeline{
+							{ID: 1, Name: "ci", Status: "failed", CreatedAt: from.Add(-60 * time.Minute), StartedAt: &baselineStart, FinishedAt: &baselineEnd, UpdatedAt: baselineEnd, SHA: "sha-1"},
+						}, nil
+					default:
+						t.Fatalf("unexpected created range after=%s before=%s", opts.CreatedAfter, opts.CreatedBefore)
+						return nil, nil
+					}
+				},
+			}, "https://gitlab.example.com/api/v4"),
+		},
+		&acceptanceAuditStore{},
+		true,
+	)
+
+	_, out, err := deps.comparePerformance(context.Background(), nil, ComparePerformanceInput{
+		Provider:   "gitlab_ci",
+		Repository: "group/app",
+		Workflow:   "ci",
+		From:       from.Format(time.RFC3339),
+		To:         to.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("comparePerformance() error = %v", err)
+	}
+	if out.Error != nil || out.Snapshot == nil {
+		t.Fatalf("expected performance snapshot, got error=%+v snapshot=%+v", out.Error, out.Snapshot)
+	}
+}
+
 func newAcceptanceDependencies(t *testing.T, client *acceptanceGitHubClient, auditStore *acceptanceAuditStore, disableMutations bool) Dependencies {
+	t.Helper()
+
+	return newAcceptanceDependenciesWithAdapters(t, []providers.Adapter{githubapi.NewProviderAdapter(client, "https://api.github.com")}, auditStore, disableMutations)
+}
+
+func newAcceptanceDependenciesWithAdapters(t *testing.T, adapters []providers.Adapter, auditStore *acceptanceAuditStore, disableMutations bool) Dependencies {
 	t.Helper()
 
 	collector := telemetry.NewCollector("")
@@ -302,6 +568,7 @@ func newAcceptanceDependencies(t *testing.T, client *acceptanceGitHubClient, aud
 		ServerName:          "pipeline-mcp",
 		Version:             "test",
 		GitHubAPIBaseURL:    "https://api.github.com",
+		GitLabAPIBaseURL:    "https://gitlab.com/api/v4",
 		DisableMutations:    disableMutations,
 		MaxLogBytes:         20 * 1024 * 1024,
 		DefaultLookbackDays: 14,
@@ -310,16 +577,16 @@ func newAcceptanceDependencies(t *testing.T, client *acceptanceGitHubClient, aud
 	}
 
 	return Dependencies{
-		Service:   service.New(cfg, mustAcceptanceRegistry(t, githubapi.NewProviderAdapter(client, cfg.GitHubAPIBaseURL)), auditStore, collector, logger),
+		Service:   service.New(cfg, mustAcceptanceRegistry(t, adapters...), auditStore, collector, logger),
 		Telemetry: collector,
 		Logger:    logger,
 	}
 }
 
-func mustAcceptanceRegistry(t *testing.T, adapter providers.Adapter) *providers.Registry {
+func mustAcceptanceRegistry(t *testing.T, adapters ...providers.Adapter) *providers.Registry {
 	t.Helper()
 
-	registry, err := providers.NewRegistry(adapter.ProviderID(), adapter)
+	registry, err := providers.NewRegistry(adapters[0].ProviderID(), adapters...)
 	if err != nil {
 		t.Fatalf("providers.NewRegistry() error = %v", err)
 	}

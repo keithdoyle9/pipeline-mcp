@@ -266,7 +266,7 @@ func (s *Service) Rerun(ctx context.Context, providerID, repository string, runI
 		return nil, domain.NewToolError(
 			domain.ErrorCodeUnauthorized,
 			"Mutation tools are disabled by configuration.",
-			"Set DISABLE_MUTATIONS=false and provide GITHUB_WRITE_TOKEN with actions:write.",
+			"Set DISABLE_MUTATIONS=false and provide the provider-specific write token for the selected provider.",
 			false,
 			nil,
 		)

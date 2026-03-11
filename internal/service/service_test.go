@@ -13,6 +13,7 @@ import (
 	"github.com/keithdoyle9/pipeline-mcp/config"
 	"github.com/keithdoyle9/pipeline-mcp/internal/domain"
 	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/gitlabapi"
 	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 	"github.com/keithdoyle9/pipeline-mcp/internal/telemetry"
 )
@@ -75,6 +76,49 @@ func (m *mockGitHubClient) Rerun(ctx context.Context, owner, repo string, runID 
 		return nil
 	}
 	return m.rerunFn(ctx, owner, repo, runID, failedJobsOnly)
+}
+
+type mockGitLabClient struct {
+	getPipelineFn      func(ctx context.Context, projectPath string, pipelineID int64) (*gitlabapi.Pipeline, error)
+	listPipelineJobsFn func(ctx context.Context, projectPath string, pipelineID int64) ([]gitlabapi.Job, error)
+	downloadJobTraceFn func(ctx context.Context, projectPath string, jobID int64, maxBytes int64) (string, error)
+	listPipelinesFn    func(ctx context.Context, projectPath string, opts gitlabapi.ListPipelinesOptions, maxRuns int) ([]gitlabapi.Pipeline, error)
+	retryPipelineFn    func(ctx context.Context, projectPath string, pipelineID int64) error
+}
+
+func (m *mockGitLabClient) GetPipeline(ctx context.Context, projectPath string, pipelineID int64) (*gitlabapi.Pipeline, error) {
+	if m.getPipelineFn == nil {
+		return nil, nil
+	}
+	return m.getPipelineFn(ctx, projectPath, pipelineID)
+}
+
+func (m *mockGitLabClient) ListPipelineJobs(ctx context.Context, projectPath string, pipelineID int64) ([]gitlabapi.Job, error) {
+	if m.listPipelineJobsFn == nil {
+		return nil, nil
+	}
+	return m.listPipelineJobsFn(ctx, projectPath, pipelineID)
+}
+
+func (m *mockGitLabClient) DownloadJobTrace(ctx context.Context, projectPath string, jobID int64, maxBytes int64) (string, error) {
+	if m.downloadJobTraceFn == nil {
+		return "", nil
+	}
+	return m.downloadJobTraceFn(ctx, projectPath, jobID, maxBytes)
+}
+
+func (m *mockGitLabClient) ListProjectPipelines(ctx context.Context, projectPath string, opts gitlabapi.ListPipelinesOptions, maxRuns int) ([]gitlabapi.Pipeline, error) {
+	if m.listPipelinesFn == nil {
+		return nil, nil
+	}
+	return m.listPipelinesFn(ctx, projectPath, opts, maxRuns)
+}
+
+func (m *mockGitLabClient) RetryPipeline(ctx context.Context, projectPath string, pipelineID int64) error {
+	if m.retryPipelineFn == nil {
+		return nil
+	}
+	return m.retryPipelineFn(ctx, projectPath, pipelineID)
 }
 
 type memoryAuditStore struct {
@@ -519,6 +563,69 @@ func TestRerunRequiresReasonAndAudit(t *testing.T) {
 	}
 }
 
+func TestGitLabRerunRejectsFullRunBeforeAPIInvocation(t *testing.T) {
+	auditStore := &memoryAuditStore{}
+	cfg := testConfig(false)
+	gitLabClient := &mockGitLabClient{
+		retryPipelineFn: func(context.Context, string, int64) error {
+			t.Fatal("expected GitLab full rerun rejection before API call")
+			return nil
+		},
+	}
+
+	svc := &Service{
+		cfg: cfg,
+		providers: mustTestRegistry(
+			t,
+			githubapi.NewProviderAdapter(&mockGitHubClient{}, cfg.GitHubAPIBaseURL),
+			gitlabapi.NewProviderAdapter(gitLabClient, cfg.GitLabAPIBaseURL),
+		),
+		audit:     auditStore,
+		telemetry: telemetry.NewCollector(""),
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:       time.Now,
+	}
+
+	_, toolErr := svc.Rerun(context.Background(), "gitlab_ci", "group/subgroup/app", 44, false, "retry all jobs")
+	if toolErr == nil {
+		t.Fatal("expected tool error")
+	}
+	if toolErr.Code != domain.ErrorCodeInvalidInput {
+		t.Fatalf("expected %s, got %s", domain.ErrorCodeInvalidInput, toolErr.Code)
+	}
+	if len(auditStore.events) != 1 || auditStore.events[0].Outcome != "failed" {
+		t.Fatalf("expected failed audit event, got %+v", auditStore.events)
+	}
+}
+
+func TestGitLabRerunMapsMissingWriteTokenToUnauthorized(t *testing.T) {
+	cfg := testConfig(false)
+	svc := &Service{
+		cfg: cfg,
+		providers: mustTestRegistry(
+			t,
+			githubapi.NewProviderAdapter(&mockGitHubClient{}, cfg.GitHubAPIBaseURL),
+			gitlabapi.NewProviderAdapter(&mockGitLabClient{
+				retryPipelineFn: func(context.Context, string, int64) error {
+					return gitlabapi.ErrWriteTokenRequired
+				},
+			}, cfg.GitLabAPIBaseURL),
+		),
+		audit:     &memoryAuditStore{},
+		telemetry: telemetry.NewCollector(""),
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:       time.Now,
+	}
+
+	_, toolErr := svc.Rerun(context.Background(), "gitlab_ci", "group/subgroup/app", 45, true, "retry failed jobs")
+	if toolErr == nil {
+		t.Fatal("expected tool error")
+	}
+	if toolErr.Code != domain.ErrorCodeUnauthorized {
+		t.Fatalf("expected %s, got %s", domain.ErrorCodeUnauthorized, toolErr.Code)
+	}
+}
+
 func TestComparePerformance(t *testing.T) {
 	now := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
 	mock := &mockGitHubClient{
@@ -873,6 +980,7 @@ func testConfig(disableMutations bool) *config.Config {
 		ServerName:          "pipeline-mcp",
 		Version:             "test",
 		GitHubAPIBaseURL:    "https://api.github.com",
+		GitLabAPIBaseURL:    "https://gitlab.com/api/v4",
 		DisableMutations:    disableMutations,
 		MaxLogBytes:         20 * 1024 * 1024,
 		DefaultLookbackDays: 14,
