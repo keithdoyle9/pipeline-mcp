@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/keithdoyle9/pipeline-mcp/actions/workflows/codeql.yml/badge.svg)](https://github.com/keithdoyle9/pipeline-mcp/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/github/license/keithdoyle9/pipeline-mcp)](LICENSE)
 
-`pipeline-mcp` is a Go MCP server for CI/CD diagnosis and remediation workflows. GitHub Actions remains the default provider, and the tool inputs now accept an optional `provider` field for provider-aware routing.
+`pipeline-mcp` is a Go MCP server for CI/CD diagnosis and remediation workflows. GitHub Actions remains the default provider, and the tool inputs accept an optional `provider` field for provider-aware routing across GitHub Actions and GitLab CI.
 
 ## MVP Capabilities
 
@@ -14,6 +14,7 @@
 - `pipeline.rerun`: trigger controlled reruns with explicit reason and audit logging.
 - `pipeline.compare_performance`: compare current window metrics against an immediately preceding baseline window.
 - All tools accept an optional `provider` input; omitting it preserves GitHub Actions as the default.
+- `provider="gitlab_ci"` enables GitLab CI support for read tools plus failed-job reruns.
 
 ## Open Source Defaults
 
@@ -36,6 +37,7 @@ for the full policy and examples.
 
 - `cmd/pipeline-mcp`: server entrypoint.
 - `internal/githubapi`: GitHub Actions adapter (run metadata, jobs, logs, reruns, retries/backoff).
+- `internal/gitlabapi`: GitLab CI adapter (pipeline metadata, jobs, logs, retries/backoff).
 - `internal/analysis`: redaction, diagnosis heuristics, flaky analysis, performance aggregation.
 - `internal/service`: orchestration, validation, tool error mapping.
 - `internal/audit`: persistent JSONL audit events for mutation tools.
@@ -46,6 +48,8 @@ for the full policy and examples.
 
 - GitHub token with `actions:read` for read tools
 - Optional write token with `actions:write` for `pipeline.rerun`
+- Optional GitLab token with `read_api` for read tools
+- Optional GitLab write token with `api` for GitLab failed-job reruns
 - Go `1.26+` only if you are building from source
 
 ## Configuration
@@ -57,8 +61,11 @@ Environment variables:
 - `LOG_LEVEL` (`debug|info|warn|error`, default: `info`)
 - `GITHUB_API_BASE_URL` (default: `https://api.github.com`)
 - `GITHUB_READ_TOKEN` (recommended)
-- `GITHUB_WRITE_TOKEN` (required when `DISABLE_MUTATIONS=false`; no shared fallback)
+- `GITHUB_WRITE_TOKEN` (optional provider-specific write token; no shared fallback)
 - `GITHUB_TOKEN` or `GH_TOKEN` can be used as fallback for `GITHUB_READ_TOKEN`
+- `GITLAB_API_BASE_URL` (default: `https://gitlab.com/api/v4`)
+- `GITLAB_READ_TOKEN` (optional; recommended for private projects)
+- `GITLAB_WRITE_TOKEN` (optional provider-specific write token used by `pipeline.rerun` when `provider="gitlab_ci"`)
 - `DISABLE_MUTATIONS` (default: `true`)
 - `AUDIT_LOG_PATH` (default: `var/audit-events.jsonl`)
 - `AUDIT_SIGNING_KEY` (optional HMAC key for tamper-evident audit signatures)
@@ -73,6 +80,8 @@ Environment variables:
 When `AUDIT_SIGNING_KEY` is unset, audit entries omit the `signature` field rather than emitting a misleading unhashed digest.
 
 For least-privilege token setup and release operations, see [docs/operator-guide.md](docs/operator-guide.md).
+
+`DISABLE_MUTATIONS=false` no longer requires a write token at startup. Each provider enforces its own explicit write token only when `pipeline.rerun` is invoked.
 
 ## Install
 
@@ -138,6 +147,7 @@ Repository-only shortcut examples:
 Use pipeline.get_run with repository="owner/repo" to inspect the latest failed run.
 Use pipeline.diagnose_failure with repository="owner/repo" to diagnose the latest failed run.
 Add provider="github_actions" explicitly only when you need to override default routing behavior.
+Use provider="gitlab_ci" with repository="group/subgroup/project" for GitLab CI runs.
 ```
 
 ## GitHub Repository Protections

@@ -11,6 +11,7 @@ import (
 	"github.com/keithdoyle9/pipeline-mcp/config"
 	"github.com/keithdoyle9/pipeline-mcp/internal/audit"
 	"github.com/keithdoyle9/pipeline-mcp/internal/githubapi"
+	"github.com/keithdoyle9/pipeline-mcp/internal/gitlabapi"
 	"github.com/keithdoyle9/pipeline-mcp/internal/providers"
 	"github.com/keithdoyle9/pipeline-mcp/internal/service"
 	"github.com/keithdoyle9/pipeline-mcp/internal/telemetry"
@@ -38,7 +39,9 @@ func run() error {
 	telemetryCollector := telemetry.NewCollector(cfg.MetricsExportPath)
 	ghClient := githubapi.NewClient(cfg.GitHubAPIBaseURL, cfg.GitHubReadToken, cfg.GitHubWriteToken, cfg.UserAgent, cfg.HTTPTimeout)
 	ghProvider := githubapi.NewProviderAdapter(ghClient, cfg.GitHubAPIBaseURL)
-	providerRegistry, err := providers.NewRegistry(ghProvider.ProviderID(), ghProvider)
+	glClient := gitlabapi.NewClient(cfg.GitLabAPIBaseURL, cfg.GitLabReadToken, cfg.GitLabWriteToken, cfg.UserAgent, cfg.HTTPTimeout)
+	glProvider := gitlabapi.NewProviderAdapter(glClient, cfg.GitLabAPIBaseURL)
+	providerRegistry, err := providers.NewRegistry(ghProvider.ProviderID(), ghProvider, glProvider)
 	if err != nil {
 		return fmt.Errorf("build provider registry: %w", err)
 	}

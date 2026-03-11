@@ -103,6 +103,21 @@ func TestLoadAllowsMutationsWhenExplicitWriteTokenIsSet(t *testing.T) {
 	}
 }
 
+func TestLoadAllowsMutationsWithoutProviderWriteToken(t *testing.T) {
+	t.Setenv("DISABLE_MUTATIONS", "false")
+	t.Setenv("GITHUB_WRITE_TOKEN", "")
+	t.Setenv("GITLAB_WRITE_TOKEN", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.DisableMutations {
+		t.Fatal("expected mutations to be enabled")
+	}
+}
+
 func TestLoadRejectsInvalidRuntimeConfiguration(t *testing.T) {
 	testCases := []struct {
 		name    string
@@ -130,16 +145,6 @@ func TestLoadRejectsInvalidRuntimeConfiguration(t *testing.T) {
 			wantErr: "HTTP_TIMEOUT_SECONDS must be greater than zero",
 		},
 		{
-			name: "mutations enabled without write token",
-			env: map[string]string{
-				"DISABLE_MUTATIONS":  "false",
-				"GITHUB_WRITE_TOKEN": "",
-				"GITHUB_TOKEN":       "",
-				"GH_TOKEN":           "",
-			},
-			wantErr: "GITHUB_WRITE_TOKEN is required when DISABLE_MUTATIONS=false",
-		},
-		{
 			name:    "invalid api base url scheme",
 			env:     map[string]string{"GITHUB_API_BASE_URL": "ssh://github.example.com"},
 			wantErr: "GITHUB_API_BASE_URL must use http or https",
@@ -148,6 +153,16 @@ func TestLoadRejectsInvalidRuntimeConfiguration(t *testing.T) {
 			name:    "missing api base url host",
 			env:     map[string]string{"GITHUB_API_BASE_URL": "https:///"},
 			wantErr: "GITHUB_API_BASE_URL must include a host",
+		},
+		{
+			name:    "invalid gitlab api base url scheme",
+			env:     map[string]string{"GITLAB_API_BASE_URL": "ssh://gitlab.example.com/api/v4"},
+			wantErr: "GITLAB_API_BASE_URL must use http or https",
+		},
+		{
+			name:    "missing gitlab api base url host",
+			env:     map[string]string{"GITLAB_API_BASE_URL": "https:///api/v4"},
+			wantErr: "GITLAB_API_BASE_URL must include a host",
 		},
 	}
 

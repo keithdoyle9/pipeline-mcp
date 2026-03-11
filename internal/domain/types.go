@@ -4,6 +4,7 @@ import "time"
 
 const (
 	ProviderGitHub = "github_actions"
+	ProviderGitLab = "gitlab_ci"
 )
 
 const (

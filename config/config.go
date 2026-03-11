@@ -19,6 +19,9 @@ type Config struct {
 	GitHubAPIBaseURL    string
 	GitHubReadToken     string
 	GitHubWriteToken    string
+	GitLabAPIBaseURL    string
+	GitLabReadToken     string
+	GitLabWriteToken    string
 	DisableMutations    bool
 	AuditLogPath        string
 	AuditSigningKey     string
@@ -71,6 +74,9 @@ func Load() (*Config, error) {
 		GitHubAPIBaseURL:    strings.TrimRight(getEnv("GITHUB_API_BASE_URL", "https://api.github.com"), "/"),
 		GitHubReadToken:     firstEnv("GITHUB_READ_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"),
 		GitHubWriteToken:    strings.TrimSpace(os.Getenv("GITHUB_WRITE_TOKEN")),
+		GitLabAPIBaseURL:    strings.TrimRight(getEnv("GITLAB_API_BASE_URL", "https://gitlab.com/api/v4"), "/"),
+		GitLabReadToken:     strings.TrimSpace(os.Getenv("GITLAB_READ_TOKEN")),
+		GitLabWriteToken:    strings.TrimSpace(os.Getenv("GITLAB_WRITE_TOKEN")),
 		DisableMutations:    disableMutations,
 		AuditLogPath:        getEnv("AUDIT_LOG_PATH", "var/audit-events.jsonl"),
 		AuditSigningKey:     strings.TrimSpace(os.Getenv("AUDIT_SIGNING_KEY")),
@@ -174,19 +180,26 @@ func validate(cfg *Config) error {
 	if cfg.HTTPTimeout <= 0 {
 		return fmt.Errorf("HTTP_TIMEOUT_SECONDS must be greater than zero")
 	}
-	if !cfg.DisableMutations && strings.TrimSpace(cfg.GitHubWriteToken) == "" {
-		return fmt.Errorf("GITHUB_WRITE_TOKEN is required when DISABLE_MUTATIONS=false")
+	if err := validateBaseURL("GITHUB_API_BASE_URL", cfg.GitHubAPIBaseURL); err != nil {
+		return err
+	}
+	if err := validateBaseURL("GITLAB_API_BASE_URL", cfg.GitLabAPIBaseURL); err != nil {
+		return err
 	}
 
-	parsedURL, err := url.Parse(cfg.GitHubAPIBaseURL)
+	return nil
+}
+
+func validateBaseURL(name, raw string) error {
+	parsedURL, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("parse GITHUB_API_BASE_URL: %w", err)
+		return fmt.Errorf("parse %s: %w", name, err)
 	}
 	if parsedURL.Scheme != "https" && parsedURL.Scheme != "http" {
-		return fmt.Errorf("GITHUB_API_BASE_URL must use http or https")
+		return fmt.Errorf("%s must use http or https", name)
 	}
 	if strings.TrimSpace(parsedURL.Host) == "" {
-		return fmt.Errorf("GITHUB_API_BASE_URL must include a host")
+		return fmt.Errorf("%s must include a host", name)
 	}
 
 	return nil
