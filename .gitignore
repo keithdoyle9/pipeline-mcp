@@ -19,8 +19,10 @@ var/
 # Local agent/tooling state
 .agent/
 .claude/
+.gomodcache/
 pipeline-mcp-dev-plan.md
 pipeline-mcp-prd.md
+pipeline-mcp-post-mvp-plan.md
 
 # IDE / OS files
 .DS_Store
